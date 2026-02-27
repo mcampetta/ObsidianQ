@@ -1,0 +1,44 @@
+  Completed
+
+  CLI: --password-stdin flag (Rust)
+
+  Added to both encrypt.rs and decrypt.rs:
+  - --password-stdin reads one line from stdin, strips \r\n, zeroizes the raw buffer
+  - Conflicts with --pubkey (encrypt) so the clap arg parser rejects invalid combos
+  - Interactive --password still prompts + confirms as before
+  - cargo build -p obsidianq-cli → 0 warnings, 0 errors
+
+  Windows GUI (tools/windows-gui/)
+
+  ┌────────────────────────────┬──────────────────────────────────────────────┐
+  │            File            │                   Purpose                    │
+  ├────────────────────────────┼──────────────────────────────────────────────┤
+  │ ObsidianQ.Launcher.sln     │ Visual Studio solution                       │
+  ├────────────────────────────┼──────────────────────────────────────────────┤
+  │ ObsidianQ.Launcher.csproj  │ .NET 8 WinForms, win-x64 single-file publish │
+  ├────────────────────────────┼──────────────────────────────────────────────┤
+  │ Program.cs                 │ Full GUI — see below                         │
+  ├────────────────────────────┼──────────────────────────────────────────────┤
+  │ install_context_menu.cmd   │ HKCU registry entries, no admin              │
+  ├────────────────────────────┼──────────────────────────────────────────────┤
+  │ uninstall_context_menu.cmd │ Clean removal                                │
+  ├────────────────────────────┼──────────────────────────────────────────────┤
+  │ README_TESTERS.md          │ Build + deployment guide                     │
+  └────────────────────────────┴──────────────────────────────────────────────┘
+
+  dotnet build → 0 warnings, 0 errors
+
+  Cyberpunk aesthetic implemented
+
+  - #050807 background, #00FF7A neon green accent
+  - NeonButton: fully owner-drawn, flat border, hover glow
+  - SegmentedToggle: custom-drawn PASSWORD | PQC switch
+  - ScanlineOverlay: transparent Panel drawing faint horizontal lines over the log console
+  - ShimmerStrip: 3 px animated gradient at the top of the window — starts on Run, stops on completion
+  - Monospace log (RichTextBox) with neon border, per-line colour (stdout=green, stderr=red)
+  - No default WinForms control styling on interactive elements
+
+  Security
+
+  - Password written to obsidianq.exe stdin then stdin closed immediately — never touches argv or environment
+  - GUI never stores or logs the password value

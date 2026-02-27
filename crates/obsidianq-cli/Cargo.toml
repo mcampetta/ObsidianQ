@@ -1,0 +1,27 @@
+[package]
+name    = "obsidianq-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "obsidianq"
+path = "src/main.rs"
+
+[features]
+# Enable virtual drive mounting via WinFSP.
+# Requires WinFSP SDK at build time and runtime.
+# Build: cargo build --features winfsp
+winfsp = ["obsidianq-fs/winfsp"]
+
+[dependencies]
+obsidianq-core.workspace     = true
+obsidianq-fs                 = { workspace = true }
+clap.workspace               = true
+anyhow.workspace             = true
+zeroize.workspace            = true
+rand.workspace               = true
+hex.workspace                = true
+base64ct.workspace           = true
+tracing.workspace            = true
+tracing-subscriber.workspace = true
+rpassword = "7"

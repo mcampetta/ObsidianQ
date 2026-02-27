@@ -1,0 +1,19 @@
+[package]
+name    = "obsidianq-fs"
+version.workspace = true
+edition.workspace = true
+
+[features]
+# Enable actual WinFSP mount support.
+# Requires WinFSP SDK installed at build time:
+#   https://github.com/winfsp/winfsp/releases
+# Build with: cargo build --features winfsp
+winfsp = []
+
+[dependencies]
+obsidianq-core.workspace = true
+thiserror.workspace      = true
+zeroize.workspace        = true
+
+# Windows APIs: named events (IPC) + LoadLibrary (WinFSP detection)
+windows-sys.workspace = true

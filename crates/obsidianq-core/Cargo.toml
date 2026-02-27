@@ -1,0 +1,33 @@
+[package]
+name    = "obsidianq-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+pqcrypto-kyber.workspace   = true
+pqcrypto-traits.workspace  = true
+hkdf.workspace             = true
+sha2.workspace             = true
+argon2.workspace           = true
+chacha20poly1305.workspace = true
+aes-gcm.workspace          = true
+blake3.workspace           = true
+rand.workspace             = true
+rand_core.workspace        = true
+zeroize.workspace          = true
+subtle.workspace           = true
+zstd.workspace             = true
+rayon.workspace            = true
+byteorder.workspace        = true
+thiserror.workspace        = true
+hex.workspace              = true
+base64ct.workspace         = true
+tracing.workspace          = true
+
+[dev-dependencies]
+criterion.workspace = true
+
+[features]
+default = ["xchacha20"]
+xchacha20 = []
+aesgcm    = []

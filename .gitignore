@@ -1,0 +1,26 @@
+﻿# Rust
+/target/
+**/*.rs.bk
+
+# .NET / WinForms
+**/bin/
+**/obj/
+
+# Bundle outputs
+/dist/
+
+# IDE/editor
+.vs/
+.vscode/
+*.user
+*.suo
+
+# OS
+Thumbs.db
+Desktop.ini
+
+# Local tooling
+.claude/
+
+# Large local installers
+*.msi

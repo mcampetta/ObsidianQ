@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+    <AssemblyName>ObsidianQ.Launcher</AssemblyName>
+    <RootNamespace>ObsidianQ.Launcher</RootNamespace>
+    <ApplicationIcon>..\..\assets\icon\obsidianq_icon_v2.ico</ApplicationIcon>
+
+    <!-- Single-file publish -->
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PublishReadyToRun>false</PublishReadyToRun>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+
+    <!-- Trimming (WinForms needs partial trimming at minimum) -->
+    <PublishTrimmed>false</PublishTrimmed>
+
+    <Version>1.0.0</Version>
+    <Description>ObsidianQ post-quantum encryption launcher</Description>
+  </PropertyGroup>
+
+  <!-- Add <ApplicationIcon>obsidianq.ico</ApplicationIcon> and an icon file to use a custom icon -->
+
+</Project>

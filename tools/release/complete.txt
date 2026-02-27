@@ -1,0 +1,46 @@
+  ---
+  Deliverables
+
+  tools/
+    release/
+      build_bundle.ps1      ← primary build script
+      build_bundle.cmd      ← double-click wrapper
+      clean_bundle.ps1      ← wipe dist output
+
+  dist/
+    .gitkeep
+    ObsidianQBundle/        ← ready-to-hand bundle (produced by script)
+      obsidianq.exe           (2.5 MB, Rust release)
+      ObsidianQ.Launcher.exe  (154 MB, .NET 8 self-contained single-file)
+      install_context_menu.cmd
+      uninstall_context_menu.cmd
+      README_TESTERS.md
+      keys/
+        README_KEYS.txt
+    ObsidianQBundle.zip     ← 63 MB compressed archive
+
+  ---
+  Developer instructions
+
+  Build:
+  :: From repo root — double-click or run in cmd:
+  tools\release\build_bundle.cmd
+
+  :: Or PowerShell directly (skip zip with -NoZip):
+  powershell -ExecutionPolicy Bypass -File tools\release\build_bundle.ps1
+
+  What the script does:
+  1. Checks that cargo and dotnet are on PATH (falls back to ~\.cargo\bin\ for cargo)
+  2. cargo build -p obsidianq-cli --release → target\release\obsidianq.exe
+  3. dotnet publish tools\windows-gui\ObsidianQ.Launcher.csproj -c Release → single self-contained EXE (154 MB, no
+  .NET install needed on tester machines)
+  4. Stages both EXEs + scripts + README + keys\ into dist\ObsidianQBundle\
+  5. Zips to dist\ObsidianQBundle.zip using Compress-Archive
+
+  Hand to testers:
+  1. Send dist\ObsidianQBundle.zip
+  2. Tester extracts anywhere → runs install_context_menu.cmd once → done
+  3. Right-click any file in Explorer or double-click the Launcher EXE
+
+  Clean:
+  powershell -File tools\release\clean_bundle.ps1
