@@ -155,9 +155,12 @@ unsafe extern "system" fn cb_get_security_by_name(
     file_name:       PWSTR,
     p_file_attrs:    *mut UINT32,
     _security_desc:  PVOID,
-    _security_size:  PSIZE_T,
+    security_size:   PSIZE_T,
 ) -> NTSTATUS {
     let fs = unsafe { get_fs(fsp) };
+    if !security_size.is_null() {
+        unsafe { *security_size = 0; }
+    }
     match fs.classify_path(file_name) {
         Some(FcKind::Root) => {
             if !p_file_attrs.is_null() {
@@ -284,7 +287,7 @@ unsafe extern "system" fn cb_read_directory(
     let past_file   = !marker_str.is_empty()
         && !marker_str.eq_ignore_ascii_case(".");
 
-    // "." — root self-reference
+    // "." Ã¢â‚¬â€ root self-reference
     if !past_dot {
         let mut di = FspFsctlDirInfo::new(fs.file_info_dir, ".");
         let ok = unsafe {
@@ -312,7 +315,31 @@ unsafe extern "system" fn cb_read_directory(
     STATUS_SUCCESS
 }
 
-/// All write/create/delete/rename operations → STATUS_MEDIA_WRITE_PROTECTED.
+/// All write/create/delete/rename operations Ã¢â€ â€™ STATUS_MEDIA_WRITE_PROTECTED.
+
+unsafe extern "system" fn cb_flush(
+    fsp:    *mut FspFileSystem,
+    fc:     PVOID,
+    p_info: *mut FspFsctlFileInfo,
+) -> NTSTATUS {
+    if p_info.is_null() || fc.is_null() {
+        return STATUS_SUCCESS;
+    }
+    cb_get_file_info(fsp, fc, p_info)
+}
+
+unsafe extern "system" fn cb_get_security(
+    _fsp:           *mut FspFileSystem,
+    _fc:            PVOID,
+    _security_desc: PVOID,
+    security_size:  PSIZE_T,
+) -> NTSTATUS {
+    if !security_size.is_null() {
+        unsafe { *security_size = 0; }
+    }
+    STATUS_SUCCESS
+}
+
 unsafe extern "system" fn cb_write_denied(
     _fsp: *mut FspFileSystem,
     _fc:  PVOID,
@@ -330,8 +357,16 @@ unsafe extern "system" fn cb_create_denied(
     _: UINT64, _: UINT32, _: *mut PVOID, _: *mut FspFsctlFileInfo,
 ) -> NTSTATUS { STATUS_MEDIA_WRITE_PROTECTED }
 
+unsafe extern "system" fn cb_overwrite_denied(
+    _: *mut FspFileSystem, _: PVOID, _: UINT32, _: BOOLEAN, _: UINT64, _: *mut FspFsctlFileInfo,
+) -> NTSTATUS { STATUS_MEDIA_WRITE_PROTECTED }
+
 unsafe extern "system" fn cb_rename_denied(
     _: *mut FspFileSystem, _: PVOID, _: PWSTR, _: PWSTR, _: BOOLEAN,
+) -> NTSTATUS { STATUS_MEDIA_WRITE_PROTECTED }
+
+unsafe extern "system" fn cb_set_file_size_denied(
+    _: *mut FspFileSystem, _: PVOID, _: UINT64, _: BOOLEAN, _: *mut FspFsctlFileInfo,
 ) -> NTSTATUS { STATUS_MEDIA_WRITE_PROTECTED }
 
 unsafe extern "system" fn cb_set_basic_info_denied(
@@ -343,8 +378,13 @@ unsafe extern "system" fn cb_can_delete_denied(
     _: *mut FspFileSystem, _: PVOID, _: PWSTR,
 ) -> NTSTATUS { STATUS_MEDIA_WRITE_PROTECTED }
 
+unsafe extern "system" fn cb_set_security_denied(
+    _: *mut FspFileSystem, _: PVOID, _: UINT32, _: PVOID,
+) -> NTSTATUS { STATUS_MEDIA_WRITE_PROTECTED }
+
+
 // ---------------------------------------------------------------------------
-// Interface table — must be static (WinFSP holds a pointer to it).
+// Interface table Ã¢â‚¬â€ must be static (WinFSP holds a pointer to it).
 // ---------------------------------------------------------------------------
 
 static OBSQ_INTERFACE: FspFileSystemInterface = FspFileSystemInterface {
@@ -353,21 +393,21 @@ static OBSQ_INTERFACE: FspFileSystemInterface = FspFileSystemInterface {
     get_security_by_name: Some(cb_get_security_by_name),
     create:               Some(cb_create_denied),
     open:                 Some(cb_open),
-    overwrite:            None,
+    overwrite:            Some(cb_overwrite_denied),
     cleanup:              Some(cb_cleanup),
     close:                Some(cb_close),
     read:                 Some(cb_read),
     write:                Some(cb_write_denied),
-    flush:                None,
+    flush:                Some(cb_flush),
     get_file_info:        Some(cb_get_file_info),
     set_basic_info:       Some(cb_set_basic_info_denied),
-    set_file_size:        None,
+    set_file_size:        Some(cb_set_file_size_denied),
     can_delete:           Some(cb_can_delete_denied),
     rename:               Some(cb_rename_denied),
-    get_security:         None,
-    set_security:         None,
+    get_security:         Some(cb_get_security),
+    set_security:         Some(cb_set_security_denied),
     read_directory:       Some(cb_read_directory),
-    _rest:                [0u64; 29],
+    _rest:                [0u64; 45],
 };
 
 // ---------------------------------------------------------------------------
@@ -393,12 +433,12 @@ pub fn mount_container(
 
     // Build the volume params.
     let mut params = FspFsctlVolumeParams::new(total, "ObsidianQ");
-    // Disable persistent ACLs — we serve our own security model.
+    // Disable persistent ACLs Ã¢â‚¬â€ we serve our own security model.
     params.Flags &= !(1 << 3); // clear PersistentAcls
 
     // Wide-string device path for WinFSP user-mode filesystem.
-    // FSP_FSCTL_DISK_DEVICE_NAME from winfsp.h = L"\\\\.\\WinFsp.Disk"
-    let device_path = str_to_wchar_vec(r"\\.\WinFsp.Disk");
+    // FSP_FSCTL_DISK_DEVICE_NAME from winfsp.h = "WinFsp.Disk"
+    let device_path = str_to_wchar_vec("WinFsp.Disk");
     let mount_point  = str_to_wchar_vec(&format!("{drive_letter}:"));
 
     let mut fsp_ptr: *mut FspFileSystem = std::ptr::null_mut();
@@ -454,8 +494,9 @@ pub fn mount_container(
     unsafe { FspFileSystemStopDispatcher(fsp_ptr); }
     unsafe { FspFileSystemDelete(fsp_ptr); }
 
-    // Drop the fs_box — this zeroizes the MasterKey via Arc drop.
+    // Drop the fs_box Ã¢â‚¬â€ this zeroizes the MasterKey via Arc drop.
     drop(fs_box);
 
     Ok(())
 }
+

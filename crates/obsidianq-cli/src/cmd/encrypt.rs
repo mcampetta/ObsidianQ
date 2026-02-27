@@ -1,4 +1,4 @@
-use std::fs;
+﻿use std::fs;
 use std::io::{BufReader, BufWriter, BufRead};
 use std::path::PathBuf;
 
@@ -16,7 +16,7 @@ use obsidianq_core::{
     format::{Mode, SuiteId},
 };
 
-use super::read_pem_pub;
+use super::read_pub;
 
 #[derive(Args)]
 pub struct EncryptArgs {
@@ -36,7 +36,7 @@ pub struct EncryptArgs {
     #[arg(long, conflicts_with_all = ["password", "pubkey"])]
     pub password_stdin: bool,
 
-    /// Recipient ML-KEM-768 public key (.pem)
+    /// Recipient ML-KEM-768 public key file (.bin raw bytes by default; .pem also supported)
     #[arg(long, conflicts_with_all = ["password", "password_stdin"])]
     pub pubkey: Option<PathBuf>,
 
@@ -96,7 +96,7 @@ pub fn run(args: EncryptArgs) -> Result<()> {
     } else {
         // PQC mode: encapsulate to recipient public key.
         let pk_path = args.pubkey.as_ref().unwrap();
-        let pk_raw = read_pem_pub(pk_path).context("read public key")?;
+        let pk_raw = read_pub(pk_path).context("read public key")?;
 
         if pk_raw.len() != EK_BYTES {
             bail!("public key is {} bytes, expected {}", pk_raw.len(), EK_BYTES);
@@ -159,6 +159,7 @@ fn parse_suite(s: &str) -> Result<SuiteId> {
     match s {
         "xchacha20" => Ok(SuiteId::XChaCha20Poly1305),
         "aesgcm"    => Ok(SuiteId::Aes256Gcm),
-        other       => bail!("unknown suite '{}' — use 'xchacha20' or 'aesgcm'", other),
+        other       => bail!("unknown suite '{}' â€” use 'xchacha20' or 'aesgcm'", other),
     }
 }
+

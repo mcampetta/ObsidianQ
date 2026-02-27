@@ -1,4 +1,4 @@
-use std::fs;
+﻿use std::fs;
 use std::io::{BufRead, BufReader, BufWriter};
 use std::path::PathBuf;
 
@@ -14,7 +14,7 @@ use obsidianq_core::{
     format::{FileHeader, Mode},
 };
 
-use super::read_pem_priv;
+use super::read_priv;
 
 #[derive(Args)]
 pub struct DecryptArgs {
@@ -64,7 +64,7 @@ pub fn run(args: DecryptArgs) -> Result<()> {
         Mode::Pqc => {
             let pk_path = args.privkey.as_ref()
                 .context("--privkey required for PQC mode")?;
-            let dk_raw = read_pem_priv(pk_path).context("read private key")?;
+            let dk_raw = read_priv(pk_path).context("read private key")?;
             if dk_raw.len() != DK_BYTES {
                 bail!("private key is {} bytes, expected {}", dk_raw.len(), DK_BYTES);
             }
@@ -109,3 +109,4 @@ pub fn run(args: DecryptArgs) -> Result<()> {
     println!("Decrypted {} bytes in {:.2?}  ({:.1} MB/s)", out_size, elapsed, mb_per_s);
     Ok(())
 }
+

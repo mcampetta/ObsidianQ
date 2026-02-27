@@ -1,8 +1,8 @@
-//! `obsidianq mount` — mount a container as a read-only virtual drive.
+﻿//! `obsidianq mount` â€” mount a container as a read-only virtual drive.
 //!
 //! Usage:
 //!   obsidianq mount --in vault.obsq --drive Z: --password-stdin
-//!   obsidianq mount --in vault.obsq --drive Z: --privkey recipient.priv.pem
+//!   obsidianq mount --in vault.obsq --drive Z: --privkey recipient.priv.bin
 //!
 //! Requires WinFSP to be installed (https://github.com/winfsp/winfsp/releases)
 //! and the CLI to be built with `--features winfsp`.
@@ -25,7 +25,7 @@ use obsidianq_core::{
 };
 use obsidianq_fs::{is_winfsp_available, mount_container};
 
-use super::read_pem_priv;
+use super::read_priv;
 
 #[derive(Args)]
 pub struct MountArgs {
@@ -41,21 +41,21 @@ pub struct MountArgs {
     #[arg(long, conflicts_with = "privkey")]
     pub password_stdin: bool,
 
-    /// Private key (.pem) for PQC-mode containers.
+    /// Private key file for PQC-mode containers (.bin raw bytes by default; .pem also supported).
     #[arg(long, conflicts_with = "password_stdin")]
     pub privkey: Option<PathBuf>,
 }
 
 pub fn run(args: MountArgs) -> Result<()> {
-    // ── Validate drive letter ──────────────────────────────────────────────
+    // â”€â”€ Validate drive letter â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     let dl = args.drive.trim_end_matches(':').chars().next()
         .context("--drive must be a letter such as Z or Z:")?
         .to_ascii_uppercase();
     if !('A'..='Z').contains(&dl) {
-        bail!("invalid drive letter '{dl}' — use A–Z");
+        bail!("invalid drive letter '{dl}' â€” use Aâ€“Z");
     }
 
-    // ── Check WinFSP availability ──────────────────────────────────────────
+    // â”€â”€ Check WinFSP availability â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if !is_winfsp_available() {
         bail!(
             "WinFSP is not installed.\n\
@@ -64,13 +64,13 @@ pub fn run(args: MountArgs) -> Result<()> {
         );
     }
 
-    // ── Peek at header to determine mode ──────────────────────────────────
+    // â”€â”€ Peek at header to determine mode â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     let mut peek = BufReader::new(
         fs::File::open(&args.r#in).context("open container")?,
     );
     let header = FileHeader::read_from(&mut peek).context("parse container header")?;
 
-    // ── Derive master key ──────────────────────────────────────────────────
+    // â”€â”€ Derive master key â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     let master_key = match header.mode {
         Mode::Password => {
             if !args.password_stdin && args.privkey.is_none() {
@@ -99,8 +99,8 @@ pub fn run(args: MountArgs) -> Result<()> {
         }
         Mode::Pqc => {
             let pk_path = args.privkey.as_ref()
-                .context("PQC-mode container: use --privkey <private-key.pem>")?;
-            let dk_raw = read_pem_priv(pk_path).context("read private key")?;
+                .context("PQC-mode container: use --privkey <private-key.bin>")?;
+            let dk_raw = read_priv(pk_path).context("read private key")?;
             if dk_raw.len() != DK_BYTES {
                 bail!("private key is {} bytes, expected {}", dk_raw.len(), DK_BYTES);
             }
@@ -120,7 +120,7 @@ pub fn run(args: MountArgs) -> Result<()> {
         }
     };
 
-    // ── Build the seekable container manifest (verifies both MACs) ────────
+    // â”€â”€ Build the seekable container manifest (verifies both MACs) â”€â”€â”€â”€â”€â”€â”€â”€
     let mut reader = BufReader::new(
         fs::File::open(&args.r#in).context("open container")?,
     );
@@ -133,7 +133,9 @@ pub fn run(args: MountArgs) -> Result<()> {
     println!("  Plain size: {} bytes", manifest.total_plaintext_len);
     println!("  Mount at  : {dl}:");
 
-    // ── Mount (blocks until Ctrl+C or unmount command) ────────────────────
+    // â”€â”€ Mount (blocks until Ctrl+C or unmount command) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     mount_container(&args.r#in, master_key, manifest, dl)
         .map_err(|e| anyhow::anyhow!("{e}"))
 }
+
+

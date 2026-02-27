@@ -1,4 +1,4 @@
-// ObsidianQ Launcher — WinForms .NET 8 GUI wrapper
+﻿// ObsidianQ Launcher --- WinForms .NET 8 GUI wrapper
 // Calls obsidianq.exe via stdin for password; never passes secrets via CLI args.
 // Cyberpunk aesthetic: #050807 bg, #00FF7A neon green accent, monospace console.
 
@@ -47,7 +47,7 @@ static class Theme
     public static Font Mono(float size) => new("Cascadia Mono", size, FontStyle.Regular, GraphicsUnit.Point);
     public static Font MonoBold(float size) => new("Cascadia Mono", size, FontStyle.Bold, GraphicsUnit.Point);
 
-    // Fallback chain: Cascadia → Consolas → Courier New
+    // Fallback chain: Cascadia --- Consolas --- Courier New
     public static Font SafeMono(float size)
     {
         foreach (string name in new[] { "Cascadia Mono", "Cascadia Code", "Consolas", "Courier New" })
@@ -72,7 +72,7 @@ class NeonButton : Button
         Font = Theme.SafeMono(9f);
         Cursor = Cursors.Hand;
         UseVisualStyleBackColor = false;
-        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.DoubleBuffer, true);
+        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
     }
     protected override void OnMouseEnter(EventArgs e) { _hovered = true; Invalidate(); base.OnMouseEnter(e); }
     protected override void OnMouseLeave(EventArgs e) { _hovered = false; Invalidate(); base.OnMouseLeave(e); }
@@ -80,15 +80,16 @@ class NeonButton : Button
     protected override void OnPaint(PaintEventArgs e)
     {
         var g = e.Graphics;
-        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
         var rc = ClientRectangle;
+        if (rc.Width <= 1 || rc.Height <= 1) return;
 
         // Background
         using var bgBrush = new SolidBrush(_hovered ? Theme.Surface : Theme.Bg);
         g.FillRectangle(bgBrush, rc);
 
         // Border
-        using var pen = new Pen(_hovered ? Theme.Accent : Theme.AccentDim, 1f);
+        using var pen = new Pen(_hovered ? Theme.Accent : Theme.AccentDim, 1f) { Alignment = System.Drawing.Drawing2D.PenAlignment.Inset };
         g.DrawRectangle(pen, rc.X, rc.Y, rc.Width - 1, rc.Height - 1);
 
         // Subtle glow when hovered
@@ -118,7 +119,7 @@ class SegmentedToggle : Control
 
     public SegmentedToggle()
     {
-        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.DoubleBuffer, true);
+        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
         Height = 32;
         Cursor = Cursors.Hand;
         Font = Theme.SafeMono(8.5f);
@@ -135,7 +136,7 @@ class SegmentedToggle : Control
     protected override void OnPaint(PaintEventArgs e)
     {
         var g = e.Graphics;
-        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
         int half = Width / 2;
         int[] xs = [0, half];
         int[] ws = [half, Width - half];
@@ -159,7 +160,7 @@ class SegmentedToggle : Control
 }
 
 // ---------------------------------------------------------------------------
-// Scanline overlay panel — draws faint horizontal lines over a child control
+// Scanline overlay panel --- draws faint horizontal lines over a child control
 // ---------------------------------------------------------------------------
 class ScanlineOverlay : Panel
 {
@@ -191,7 +192,7 @@ class ScanlineOverlay : Panel
 }
 
 // ---------------------------------------------------------------------------
-// Shimmer strip — animated top-line effect during active operation
+// Shimmer strip --- animated top-line effect during active operation
 // ---------------------------------------------------------------------------
 class ShimmerStrip : Control
 {
@@ -202,7 +203,7 @@ class ShimmerStrip : Control
     public ShimmerStrip()
     {
         Height = 3;
-        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.DoubleBuffer, true);
+        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
         BackColor = Theme.Bg;
         _timer = new System.Windows.Forms.Timer { Interval = 16 };
         _timer.Tick += (_, _) => { _pos = (_pos + 0.015f) % 1.0f; Invalidate(); };
@@ -233,7 +234,7 @@ class ShimmerStrip : Control
 }
 
 // ---------------------------------------------------------------------------
-// Drop zone panel — prominent file-drop target with click-to-browse
+// Drop zone panel --- prominent file-drop target with click-to-browse
 // ---------------------------------------------------------------------------
 class DropZonePanel : Panel
 {
@@ -247,7 +248,7 @@ class DropZonePanel : Panel
     public DropZonePanel()
     {
         AllowDrop = true;
-        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.DoubleBuffer, true);
+        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
         BackColor = Theme.Surface;
         Cursor    = Cursors.Hand;
 
@@ -288,16 +289,17 @@ class DropZonePanel : Panel
     protected override void OnPaint(PaintEventArgs e)
     {
         var g  = e.Graphics;
-        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
         var rc = ClientRectangle;
+        if (rc.Width <= 1 || rc.Height <= 1) return;
 
         // Background
         using var bgBrush = new SolidBrush(_dragging ? Color.FromArgb(18, Theme.Accent) : Theme.Surface);
         g.FillRectangle(bgBrush, rc);
 
-        // Border — accent on drag-over, dim accent on hover, border otherwise
+        // Border --- accent on drag-over, dim accent on hover, border otherwise
         var borderColor = _dragging ? Theme.Accent : (_hovering ? Theme.AccentDim : Theme.Border);
-        using var borderPen = new Pen(borderColor, _dragging ? 2f : 1f);
+        using var borderPen = new Pen(borderColor, _dragging ? 2f : 1f) { Alignment = System.Drawing.Drawing2D.PenAlignment.Inset };
         g.DrawRectangle(borderPen, rc.X, rc.Y, rc.Width - 1, rc.Height - 1);
 
         // Bottom accent underline on drag-over
@@ -352,6 +354,7 @@ class MainForm : Form
     private readonly TextBox _txtPassword, _txtConfirm;
     private readonly TextBox _txtPrivkey;
     private readonly NeonButton _btnBrowsePrivkey;
+    private readonly NeonButton _btnGenerateKeypair;
     private readonly CheckBox _chkCompress;
     private readonly ComboBox _cmbSuite;
     private readonly RichTextBox _rtbLog;
@@ -367,23 +370,30 @@ class MainForm : Form
 
     // Resolved obsidianq.exe path
     private static readonly string ExePath = ResolveExePath();
+    private static readonly string LocalKeysDir = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "ObsidianQ",
+        "keys");
+    private static readonly string BundleKeysDir = Path.Combine(AppContext.BaseDirectory, "keys");
+    private static readonly string[] DefaultPubKeyNames = ["obsidianq_test_pub.bin", "obsidianq_test_pub.pem", "obsidianq_pub.bin", "obsidianq_pub.pem"];
+    private static readonly string[] DefaultPrivKeyNames = ["obsidianq_test_priv.bin", "obsidianq_test_priv.pem", "obsidianq_priv.bin", "obsidianq_priv.pem"];
 
     public MainForm(string? preloadPath)
     {
-        Text = "ObsidianQ — Post-Quantum Encryption";
-        Size = new Size(820, 680);
-        MinimumSize = new Size(700, 580);
+        Text = "ObsidianQ - Post-Quantum Encryption";
+        Size = new Size(800, 680);
+        MinimumSize = new Size(680, 580);
         BackColor = Theme.Bg;
         ForeColor = Theme.TextMain;
         FormBorderStyle = FormBorderStyle.Sizable;
         StartPosition = FormStartPosition.CenterScreen;
         Font = Theme.SafeMono(9f);
 
-        // ── Shimmer strip (top 3 px) ──────────────────────────────────────
+        // ------ Shimmer strip (top 3 px) ------------------------------------------------------------------------------------------------------------------
         _shimmer = new ShimmerStrip { Dock = DockStyle.Top };
         Controls.Add(_shimmer);
 
-        // ── Main layout container ─────────────────────────────────────────
+        // ------ Main layout container ---------------------------------------------------------------------------------------------------------------------------
         var outer = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
@@ -396,51 +406,51 @@ class MainForm : Form
         outer.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));  // row 1: toggle
         outer.RowStyles.Add(new RowStyle(SizeType.Absolute, 68));  // row 2: drop zone
         outer.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));  // row 3: output path
-        outer.RowStyles.Add(new RowStyle(SizeType.Absolute, 100)); // row 4: mode panel
+        outer.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));  // row 4: mode panel
         outer.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));  // row 5: advanced toggle
         outer.RowStyles.Add(new RowStyle(SizeType.Absolute, 0));   // row 6: options (collapsed)
         outer.RowStyles.Add(new RowStyle(SizeType.Percent, 100));  // row 7: log
         outer.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));  // row 8: status + buttons
         Controls.Add(outer);
 
-        // ── Header label ─────────────────────────────────────────────────
+        // ------ Header label ---------------------------------------------------------------------------------------------------------------------------------------------------
         var header = MakeLabel("[ OBSIDIANQ // POST-QUANTUM FILE ENCRYPTION ]", 11f, bold: true);
         header.ForeColor = Theme.Accent;
         header.TextAlign = ContentAlignment.MiddleCenter;
         header.Dock = DockStyle.Fill;
         outer.Controls.Add(header, 0, 0);
 
-        // ── Toggle ────────────────────────────────────────────────────────
+        // ------ Toggle ------------------------------------------------------------------------------------------------------------------------------------------------------------------------
         _toggle = new SegmentedToggle { Dock = DockStyle.Fill };
         _toggle.SelectionChanged += OnToggleChanged;
         outer.Controls.Add(_toggle, 0, 1);
 
-        // ── Drop zone (row 2) ────────────────────────────────────────────
+        // ------ Drop zone (row 2) ------------------------------------------------------------------------------------------------------------------------------------
         _dropZone = new DropZonePanel { Dock = DockStyle.Fill, Margin = new Padding(0, 2, 0, 2) };
         _dropZone.FileDropped += OnFileDropped;
         outer.Controls.Add(_dropZone, 0, 2);
 
-        // ── Output path row (row 3) ──────────────────────────────────────
+        // ------ Output path row (row 3) ------------------------------------------------------------------------------------------------------------------
         var outRow = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1,
+            Dock = DockStyle.Top, ColumnCount = 3, RowCount = 1,
             BackColor = Theme.Bg, Margin = new Padding(0),
         };
         outRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 36));  // "OUT:" label
         outRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));  // derived path
-        outRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 84));  // [Change…]
+        outRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 84));  // [Change...]
         outRow.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
         var lblOutPrefix = MakeLabel("OUT:", 8f);
         lblOutPrefix.Dock = DockStyle.Fill;
         lblOutPrefix.TextAlign = ContentAlignment.MiddleLeft;
 
-        _lblOutPath = MakeLabel("—", 8f);
+        _lblOutPath = MakeLabel("-", 8f);
         _lblOutPath.Dock = DockStyle.Fill;
         _lblOutPath.TextAlign = ContentAlignment.MiddleLeft;
         _lblOutPath.ForeColor = Theme.AccentDim;
 
-        _lnkChangeOut = new NeonButton { Text = "Change…", Dock = DockStyle.Fill, Margin = new Padding(4,2,0,2) };
+        _lnkChangeOut = new NeonButton { Text = "Change...", Dock = DockStyle.Fill, Margin = new Padding(4,2,0,2) };
         _lnkChangeOut.Click += ChangeOut_Click;
 
         outRow.Controls.Add(lblOutPrefix, 0, 0);
@@ -448,10 +458,10 @@ class MainForm : Form
         outRow.Controls.Add(_lnkChangeOut, 2, 0);
         outer.Controls.Add(outRow, 0, 3);
 
-        // ── Password panel ───────────────────────────────────────────────
+        // ------ Password panel ---------------------------------------------------------------------------------------------------------------------------------------------
         _pwPanel = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 2,
+            Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1,
             BackColor = Theme.Bg, Margin = new Padding(0),
         };
         _pwPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
@@ -459,51 +469,59 @@ class MainForm : Form
         _pwPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
         _pwPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
 
-        _txtPassword = MakeTextBox(password: true); _txtPassword.PlaceholderText = "Password…";
-        _txtConfirm  = MakeTextBox(password: true); _txtConfirm.PlaceholderText  = "Confirm password…";
+        _txtPassword = MakeTextBox(password: true); _txtPassword.PlaceholderText = "Password...";
+        _txtConfirm  = MakeTextBox(password: true); _txtConfirm.PlaceholderText  = "Confirm password...";
         _pwPanel.Controls.Add(MakeLabeled("PASSWORD", _txtPassword), 0, 0);
         _pwPanel.Controls.Add(MakeLabeled("CONFIRM",  _txtConfirm),  1, 0);
 
-        // ── PQC panel ────────────────────────────────────────────────────
+        // ------ PQC panel ------------------------------------------------------------------------------------------------------------------------------------------------------------       
         _pqcPanel = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1,
+            Dock = DockStyle.Top, ColumnCount = 3, RowCount = 1,
             BackColor = Theme.Bg, Margin = new Padding(0), Visible = false,
         };
+        int pqcBrowseWidth = Math.Max(86, TextRenderer.MeasureText("BROWSE", Theme.SafeMono(9f)).Width + 16);
+        int pqcKeygenWidth = Math.Max(132, TextRenderer.MeasureText("GENERATE KEY", Theme.SafeMono(9f)).Width + 20);
         _pqcPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        _pqcPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
-        _pqcPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
+        _pqcPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, pqcBrowseWidth));
+        _pqcPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, pqcKeygenWidth));
+        _pqcPanel.RowStyles.Clear();
+        _pqcPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
+        _pqcPanel.Height = 26;
+        _pqcPanel.MinimumSize = new Size(0, 26);
+        _pqcPanel.MaximumSize = new Size(int.MaxValue, 26);
 
-        _txtPrivkey = MakeTextBox(); _txtPrivkey.PlaceholderText = "Path to private key (.pem) for decrypt, or public key (.pem) for encrypt…";
-        _btnBrowsePrivkey = new NeonButton { Text = "BROWSE", Dock = DockStyle.Fill, Margin = new Padding(4,2,0,2) };
+        _txtPrivkey = MakeTextBox(); _txtPrivkey.PlaceholderText = "Path to .bin key file (or .pem)";
+        _btnBrowsePrivkey = new NeonButton { Text = "BROWSE", Dock = DockStyle.Fill, Margin = new Padding(3,2,0,2) };
         _btnBrowsePrivkey.Click += BrowsePrivkey_Click;
-        _pqcPanel.Controls.Add(_txtPrivkey,       0, 0);
-        _pqcPanel.Controls.Add(_btnBrowsePrivkey, 1, 0);
-
+        _btnGenerateKeypair = new NeonButton { Text = "GENERATE KEY", Dock = DockStyle.Fill, Margin = new Padding(3,2,0,2) };
+        _btnGenerateKeypair.Click += BtnGenerateKeypair_Click;
+        _pqcPanel.Controls.Add(_txtPrivkey,        0, 0);
+        _pqcPanel.Controls.Add(_btnBrowsePrivkey,  1, 0);
+        _pqcPanel.Controls.Add(_btnGenerateKeypair,2, 0);
         // Stack both panels in a container
         var modeContainer = new Panel { Dock = DockStyle.Fill };
-        _pwPanel.Bounds = new Rectangle(0, 0, modeContainer.Width, modeContainer.Height);
-        _pqcPanel.Bounds = _pwPanel.Bounds;
-        _pwPanel.Anchor = _pqcPanel.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom;
+        _pwPanel.Dock = DockStyle.Fill;
+        _pqcPanel.Dock = DockStyle.Top;
         modeContainer.Controls.Add(_pwPanel);
         modeContainer.Controls.Add(_pqcPanel);
         outer.Controls.Add(modeContainer, 0, 4);
 
-        // ── Advanced toggle (row 5) ──────────────────────────────────────
+        // ------ Advanced toggle (row 5) ------------------------------------------------------------------------------------------------------------------
         _btnAdvanced = new NeonButton
         {
-            Text = "▸ ADVANCED", Dock = DockStyle.Fill,
+            Text = "ADVANCED [>]", Dock = DockStyle.Fill,
             Margin = new Padding(0), Font = Theme.SafeMono(7.5f),
         };
         _btnAdvanced.Click += (_, _) =>
         {
             _advancedExpanded = !_advancedExpanded;
             outer.RowStyles[6] = new RowStyle(SizeType.Absolute, _advancedExpanded ? 44 : 0);
-            _btnAdvanced.Text   = _advancedExpanded ? "▾ ADVANCED" : "▸ ADVANCED";
+            _btnAdvanced.Text   = _advancedExpanded ? "ADVANCED [v]" : "ADVANCED [>]";
         };
         outer.Controls.Add(_btnAdvanced, 0, 5);
 
-        // ── Options row (row 6, hidden until Advanced is clicked) ────────
+        // ------ Options row (row 6, hidden until Advanced is clicked) ------------------------
         var optRow = new FlowLayoutPanel
         {
             Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight,
@@ -527,7 +545,7 @@ class MainForm : Form
         optRow.Controls.Add(_chkCompress);
         outer.Controls.Add(optRow, 0, 6);
 
-        // ── Log console ──────────────────────────────────────────────────
+        // ------ Log console ------------------------------------------------------------------------------------------------------------------------------------------------------
         var logContainer = new Panel { Dock = DockStyle.Fill, BackColor = Theme.LogBg };
         _rtbLog = new RichTextBox
         {
@@ -547,30 +565,30 @@ class MainForm : Form
 
         outer.Controls.Add(logContainer, 0, 7);
 
-        // ── Status bar + action buttons ──────────────────────────────────
+        // ------ Status bar + action buttons ------------------------------------------------------------------------------------------------------
         var bar = new TableLayoutPanel
         {
             Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 1,
             BackColor = Theme.Bg, Margin = new Padding(0),
         };
         bar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));  // status label
-        bar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110)); // mount
-        bar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 100)); // copy log
-        bar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 100)); // run
+        bar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 98));  // mount
+        bar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 94));  // copy log
+        bar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));  // run
 
         _lblStatus = MakeLabel("READY", 8.5f);
         _lblStatus.Dock = DockStyle.Fill;
         _lblStatus.TextAlign = ContentAlignment.MiddleLeft;
 
-        _btnCopyLog = new NeonButton { Text = "COPY LOG", Dock = DockStyle.Fill, Margin = new Padding(4,2,0,2) };
+        _btnCopyLog = new NeonButton { Text = "COPY LOG", Dock = DockStyle.Fill, Margin = new Padding(3,2,0,2) };
         _btnCopyLog.Click += (_, _) => { Clipboard.SetText(_rtbLog.Text); };
 
-        _btnRun = new NeonButton { Text = "▶  RUN", Dock = DockStyle.Fill, Margin = new Padding(4,2,0,2) };
+        _btnRun = new NeonButton { Text = "RUN", Dock = DockStyle.Fill, Margin = new Padding(3,2,0,2) };
         _btnRun.Font = Theme.SafeMono(10f);
         _btnRun.ForeColor = Theme.Accent;
         _btnRun.Click += BtnRun_Click;
 
-        _btnMount = new NeonButton { Text = "⊞ MOUNT", Dock = DockStyle.Fill, Margin = new Padding(4,2,0,2) };
+        _btnMount = new NeonButton { Text = "MOUNT", Dock = DockStyle.Fill, Margin = new Padding(3,2,0,2) };
         _btnMount.Click += BtnMount_Click;
 
         bar.Controls.Add(_lblStatus,  0, 0);
@@ -579,7 +597,7 @@ class MainForm : Form
         bar.Controls.Add(_btnRun,     3, 0);
         outer.Controls.Add(bar, 0, 8);
 
-        // ── Form-level drag-and-drop (delegates to drop zone) ────────────
+        // ------ Form-level drag-and-drop (delegates to drop zone) ------------------------------------
         AllowDrop = true;
         DragEnter += (_, e) =>
         {
@@ -591,7 +609,7 @@ class MainForm : Form
                 _dropZone.SetFile(files[0]);
         };
 
-        // ── Window icon (extracted from exe's embedded application icon) ──
+        // ------ Window icon (extracted from exe's embedded application icon) ------
         try
         {
             var exeIcon = Icon.ExtractAssociatedIcon(Environment.ProcessPath ?? Application.ExecutablePath);
@@ -599,13 +617,16 @@ class MainForm : Form
         }
         catch { /* ignore in dev/test scenarios where icon isn't embedded */ }
 
-        // ── Preload path from context-menu ────────────────────────────────
-        if (preloadPath != null) AutoPopulate(preloadPath);
+        // ------ Preload path from context-menu ------------------------------------------------------------------------------------------------
+        if (preloadPath != null)
+            AutoPopulate(preloadPath);
+        else
+            TryAutoLoadDefaultKeyPath(force: false);
 
-        // ── Neon border on form ───────────────────────────────────────────
+        // ------ Neon border on form ---------------------------------------------------------------------------------------------------------------------------------
         Paint += FormPaint;
 
-        // ── Startup: warn immediately if obsidianq.exe is missing ─────────
+        // ------ Startup: warn immediately if obsidianq.exe is missing ---------------------------
         // Show after the form is first painted so the window is visible first.
         if (!File.Exists(ExePath))
         {
@@ -615,12 +636,12 @@ class MainForm : Form
 
     private void WarnMissingCli()
     {
-        StatusError("obsidianq.exe not found — see startup warning.");
+        StatusError("obsidianq.exe not found - see startup warning.");
         MessageBox.Show(
             $"obsidianq.exe was not found at:\n  {ExePath}\n\n" +
             "This usually means one of:\n" +
-            "  • The bundle was not fully extracted (both files must be in the same folder).\n" +
-            "  • Windows Defender or another antivirus quarantined obsidianq.exe\n" +
+            "  - The bundle was not fully extracted (both files must be in the same folder).\n" +
+            "  - Windows Defender or another antivirus quarantined obsidianq.exe\n" +
             "    during extraction. Check your AV quarantine and restore the file.\n\n" +
             "Encryption and decryption will not work until obsidianq.exe is present\n" +
             "alongside ObsidianQ.Launcher.exe.",
@@ -677,6 +698,14 @@ class MainForm : Form
         bool isPqc = _toggle.Selected == SegmentedToggle.Segment.Pqc;
         _pwPanel.Visible  = !isPqc;
         _pqcPanel.Visible =  isPqc;
+
+        // Keep mode row compact per selected mode.
+        if (_btnAdvanced.Parent is TableLayoutPanel outer)
+            outer.RowStyles[4] = new RowStyle(SizeType.Absolute, isPqc ? 26 : 44);
+
+        UpdateKeyPlaceholder();
+        if (isPqc)
+            TryAutoLoadDefaultKeyPath(force: false);
     }
 
     // -----------------------------------------------------------------------
@@ -689,6 +718,9 @@ class MainForm : Form
             ? Path.Combine(Path.GetDirectoryName(path)!, Path.GetFileNameWithoutExtension(path))
             : path + ".obsq";
         _lblOutPath.ForeColor = Theme.AccentDim;
+
+        UpdateKeyPlaceholder();
+        TryAutoLoadDefaultKeyPath(force: true);
     }
 
     private void ChangeOut_Click(object? sender, EventArgs e)
@@ -697,7 +729,7 @@ class MainForm : Form
         {
             Title    = "Select output file",
             Filter   = "All files|*.*|ObsidianQ files|*.obsq",
-            FileName = _lblOutPath.Text == "—" ? "" : _lblOutPath.Text,
+            FileName = _lblOutPath.Text == "-" ? "" : _lblOutPath.Text,
         };
         if (dlg.ShowDialog() == DialogResult.OK)
         {
@@ -708,13 +740,111 @@ class MainForm : Form
 
     private void BrowsePrivkey_Click(object? sender, EventArgs e)
     {
-        using var dlg = new OpenFileDialog { Title = "Select key file", Filter = "PEM files|*.pem|All files|*.*" };
+        using var dlg = new OpenFileDialog
+        {
+            Title = "Select key file",
+            Filter = "Key files|*.bin;*.pem|BIN files|*.bin|PEM files|*.pem|All files|*.*"
+        };
         if (dlg.ShowDialog() == DialogResult.OK) _txtPrivkey.Text = dlg.FileName;
+    }
+
+    private async void BtnGenerateKeypair_Click(object? sender, EventArgs e)
+    {
+        if (!File.Exists(ExePath))
+        {
+            StatusError($"obsidianq.exe not found at:\n{ExePath}");
+            return;
+        }
+
+        string keysDir = EnsureDefaultKeyDir();
+        string pubPath = Path.Combine(keysDir, "obsidianq_test_pub.bin");
+        string privPath = Path.Combine(keysDir, "obsidianq_test_priv.bin");
+
+        try
+        {
+            _btnGenerateKeypair.Enabled = false;
+            var psi = new ProcessStartInfo
+            {
+                FileName = ExePath,
+                Arguments = $"keygen --pubkey \"{pubPath}\" --privkey \"{privPath}\"",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+
+            using var proc = new Process { StartInfo = psi };
+            proc.Start();
+
+            string stdout = await proc.StandardOutput.ReadToEndAsync();
+            string stderr = await proc.StandardError.ReadToEndAsync();
+            await proc.WaitForExitAsync();
+
+            if (!string.IsNullOrWhiteSpace(stdout)) Log(stdout.TrimEnd(), Theme.Accent);
+            if (!string.IsNullOrWhiteSpace(stderr)) Log(stderr.TrimEnd(), Theme.Error);
+
+            if (proc.ExitCode != 0)
+            {
+                StatusError($"Key generation failed (exit code {proc.ExitCode}).");
+                return;
+            }
+
+            _txtPrivkey.Text = SelectDefaultKeyPathForCurrentOperation(pubPath, privPath);
+            StatusOk($"Generated keypair in {keysDir}");
+        }
+        catch (Exception ex)
+        {
+            StatusError($"Key generation failed: {ex.Message}");
+        }
+        finally
+        {
+            _btnGenerateKeypair.Enabled = true;
+        }
     }
 
     // Auto-detect mode from file extension and populate drop zone.
     // OnFileDropped handles output path derivation via the FileDropped event.
-    private void AutoPopulate(string path) => _dropZone.SetFile(path);
+    private void AutoPopulate(string path)
+    {
+        _dropZone.SetFile(path);
+        UpdateKeyPlaceholder();
+        TryAutoLoadDefaultKeyPath(force: true);
+    }
+    private bool IsEncryptMode()
+        => !((_dropZone.FilePath ?? string.Empty).EndsWith(".obsq", StringComparison.OrdinalIgnoreCase));
+    private string SelectDefaultKeyPathForCurrentOperation(string pubPath, string privPath)
+        => IsEncryptMode() ? pubPath : privPath;
+    private void UpdateKeyPlaceholder()
+    {
+        _txtPrivkey.PlaceholderText = IsEncryptMode()
+            ? "Path to public key (.bin default, .pem also supported)"
+            : "Path to private key (.bin default, .pem also supported)";
+    }
+    private string EnsureDefaultKeyDir()
+    {
+        Directory.CreateDirectory(LocalKeysDir);
+        return LocalKeysDir;
+    }
+    private void TryAutoLoadDefaultKeyPath(bool force)
+    {
+        if (_toggle.Selected != SegmentedToggle.Segment.Pqc)
+            return;
+        if (!force && !string.IsNullOrWhiteSpace(_txtPrivkey.Text) && File.Exists(_txtPrivkey.Text))
+            return;
+        string[] names = IsEncryptMode() ? DefaultPubKeyNames : DefaultPrivKeyNames;
+        foreach (string dir in new[] { BundleKeysDir, LocalKeysDir })
+        {
+            foreach (string name in names)
+            {
+                string candidate = Path.Combine(dir, name);
+                if (File.Exists(candidate))
+                {
+                    _txtPrivkey.Text = candidate;
+                    return;
+                }
+            }
+        }
+    }
 
     // -----------------------------------------------------------------------
     // WinFSP detection and on-demand install
@@ -786,7 +916,7 @@ class MainForm : Form
         }
         catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1223)
         {
-            // ERROR_CANCELLED — user clicked No on the UAC prompt.
+            // ERROR_CANCELLED --- user clicked No on the UAC prompt.
             Log("[CANCELLED] Administrator permission was denied.", Theme.Error);
             return false;
         }
@@ -809,7 +939,7 @@ class MainForm : Form
         if (_dropZone.FilePath == null || !File.Exists(_dropZone.FilePath))
         { StatusError("Drop or browse a .obsq file first."); return; }
 
-        // ── Ensure WinFSP runtime is installed ────────────────────────────
+        // ------ Ensure WinFSP runtime is installed ------------------------------------------------------------------------------------
         if (!IsWinFspInstalled())
         {
             if (!await TryInstallWinFspAsync()) return;
@@ -894,7 +1024,7 @@ class MainForm : Form
         err = null;
         if (_dropZone.FilePath == null)                     { err = "Drop or browse an input file first."; return false; }
         if (!File.Exists(_dropZone.FilePath))               { err = "Input file not found."; return false; }
-        if (string.IsNullOrWhiteSpace(_lblOutPath.Text) || _lblOutPath.Text == "—")
+        if (string.IsNullOrWhiteSpace(_lblOutPath.Text) || _lblOutPath.Text == "-")
                                                             { err = "Output path is not set."; return false; }
 
         bool isPqc = _toggle.Selected == SegmentedToggle.Segment.Pqc;
@@ -1028,7 +1158,7 @@ class MainForm : Form
     private void SetBusy(bool busy)
     {
         _busy = busy;
-        _btnRun.Text = busy ? "■  CANCEL" : "▶  RUN";
+        _btnRun.Text = busy ? "CANCEL" : "RUN";
         if (busy) _shimmer.Start(); else _shimmer.Stop();
     }
 
@@ -1088,7 +1218,7 @@ class MainForm : Form
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
 
-    // Applies a named visual style to a control — used here to give the
+    // Applies a named visual style to a control --- used here to give the
     // RichTextBox scrollbars the system dark-mode look.
     [DllImport("uxtheme.dll", CharSet = CharSet.Unicode)]
     private static extern int SetWindowTheme(IntPtr hwnd, string? pszSubAppName, string? pszSubIdList);
@@ -1111,3 +1241,42 @@ class MainForm : Form
         base.Dispose(disposing);
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

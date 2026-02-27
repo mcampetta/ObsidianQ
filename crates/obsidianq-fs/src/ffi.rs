@@ -2,7 +2,7 @@
 //!
 //! Only the functions and structures needed for a read-only single-file
 //! virtual filesystem are declared here.  No attempt is made to wrap the
-//! full WinFSP surface — add bindings as needed in future phases.
+//! full WinFSP surface â€” add bindings as needed in future phases.
 //!
 //! WinFSP documentation: https://winfsp.dev/doc/WinFsp-API-Reference/
 //! WinFSP headers       : <SDK>\inc\winfsp\winfsp.h
@@ -98,7 +98,7 @@ pub struct FspFsctlVolumeParams {
     pub Prefix:                     [u16; 192], // 56  (WCHAR[192] = 384 bytes)
     pub FileSystemName:             [u16; 16],  // 440 (WCHAR[16]  = 32 bytes)
     pub VolumeLabel:                [u16; 32],  // 472 (WCHAR[32]  = 64 bytes)
-    _reserved:                      [u8; 488],  // 536 → 1024 total
+    _reserved:                      [u8; 488],  // 536 â†’ 1024 total
 }
 
 impl FspFsctlVolumeParams {
@@ -216,7 +216,7 @@ pub type RenameFn             = unsafe extern "system" fn(*mut FspFileSystem, PV
 pub type GetSecurityFn        = unsafe extern "system" fn(*mut FspFileSystem, PVOID, PVOID, PSIZE_T) -> NTSTATUS;
 pub type SetSecurityFn        = unsafe extern "system" fn(*mut FspFileSystem, PVOID, UINT32, PVOID) -> NTSTATUS;
 pub type ReadDirectoryFn      = unsafe extern "system" fn(*mut FspFileSystem, PVOID, PWSTR, PWSTR, PVOID, ULONG, PULONG) -> NTSTATUS;
-// Remaining callbacks unused in Phase 1 — represented as *const c_void (NULL).
+// Remaining callbacks unused in Phase 1 â€” represented as *const c_void (NULL).
 
 /// The interface (function pointer) table.  Must be `#[repr(C)]` and match
 /// `FSP_FILE_SYSTEM_INTERFACE` in `winfsp.h` exactly.
@@ -246,9 +246,9 @@ pub struct FspFileSystemInterface {
     pub set_security:         Option<SetSecurityFn>,
     pub read_directory:       Option<ReadDirectoryFn>,
     // Remaining 12 named callbacks (ResolveReparsePoints..SetEa) +
-    // 17 u64 reserved words = 29 u64-sized slots.
-    // C struct total: (19 named + 12 more + 17 reserved) * 8 = 384 bytes.
-    pub _rest: [u64; 29],
+    // Reserved words = 45 u64-sized slots.
+    // C struct total: 64 function pointers * 8 = 512 bytes on x64.
+    pub _rest: [u64; 45],
 }
 
 // ---------------------------------------------------------------------------

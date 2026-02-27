@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
     Builds the ObsidianQ release bundle and stages it to dist/ObsidianQBundle/.
@@ -163,18 +163,18 @@ $keysLines = @(
     '',
     'Use the CLI to generate a Kyber768 key pair:',
     '',
-    '    obsidianq.exe keygen --pubkey recipient.pub.pem --privkey recipient.priv.pem',
+    '    obsidianq.exe keygen --pubkey recipient.pub.bin --privkey recipient.priv.bin',
     '',
-    'Share  recipient.pub.pem  with anyone who needs to encrypt files for you.',
-    'Keep   recipient.priv.pem  private (do not share, do not put in cloud storage).',
+    'Share  recipient.pub.bin  with anyone who needs to encrypt files for you.',
+    'Keep   recipient.priv.bin  private (do not share, do not put in cloud storage).',
     '',
     'Key sizes:',
-    '  Public  (encapsulation)  key : 1184 bytes (Base64 PEM ~1.6 KB)',
-    '  Private (decapsulation)  key : 2400 bytes (Base64 PEM ~3.3 KB)',
+    '  Public  (encapsulation)  key : 1184 bytes (raw bytes)',
+    '  Private (decapsulation)  key : 2400 bytes (raw bytes)',
     '',
     'Using keys in the GUI:',
-    '  - Encrypt: toggle to PQC, browse to recipient.pub.pem',
-    '  - Decrypt: toggle to PQC, browse to recipient.priv.pem'
+    '  - Encrypt: toggle to PQC, browse to recipient.pub.bin',
+    '  - Decrypt: toggle to PQC, browse to recipient.priv.bin'
 )
 $keysLines | Set-Content (Join-Path $BundleDir 'keys\README_KEYS.txt') -Encoding UTF8
 Write-OK "Created keys/README_KEYS.txt"
@@ -214,3 +214,4 @@ Write-Host "    1. Extract ObsidianQBundle.zip (or copy the folder)" -Foreground
 Write-Host "    2. Run install_context_menu.cmd  (once, no admin)" -ForegroundColor White
 Write-Host "    3. Double-click ObsidianQ.Launcher.exe  OR  right-click any file" -ForegroundColor White
 Write-Host ""
+
