@@ -94,6 +94,13 @@ cargo build
 dotnet build tools/windows-gui/ObsidianQ.Launcher.csproj -c Debug
 ```
 
+## Cross-Platform CLI Builds
+
+- GitHub Actions matrix build: `.github/workflows/cli-matrix.yml`
+- Targets: Linux, macOS, Windows
+- On version tags (`v*`), CLI binaries are attached to the GitHub Release
+- Local Linux/macOS validation checklist: `docs/CLI_LINUX_MAC_TESTING.md`
+
 ## Screenshots / Demo
 
 Repository media used by the site:
