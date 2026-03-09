@@ -7,7 +7,7 @@
     1. Locates cargo and dotnet (adds ~/.cargo/bin to PATH if needed).
     2. Builds obsidianq.exe (Rust release) from the workspace root.
     3. Publishes ObsidianQ.Launcher.exe (C# WinForms, self-contained, single-file).
-    4. Stages all bundle files under dist/ObsidianQBundle/.
+    4. Stages core bundle files under dist/ObsidianQBundle/.
     5. Optionally zips to dist/ObsidianQBundle.zip.
 
 .EXAMPLE
@@ -46,10 +46,6 @@ $GuiPublish   = Join-Path $RepoRoot 'tools\windows-gui\bin\Release\net8.0-window
 $BundleDir    = Join-Path $RepoRoot 'dist\ObsidianQBundle'
 $ZipPath      = Join-Path $RepoRoot 'dist\ObsidianQBundle.zip'
 
-$SrcInstall   = Join-Path $RepoRoot 'tools\windows-gui\install_context_menu.cmd'
-$SrcUninstall = Join-Path $RepoRoot 'tools\windows-gui\uninstall_context_menu.cmd'
-$SrcReadme    = Join-Path $RepoRoot 'tools\windows-gui\README_TESTERS.md'
-
 # ---------------------------------------------------------------------------
 # Check required tools
 # ---------------------------------------------------------------------------
@@ -73,24 +69,10 @@ if (-not $dotnet) { Write-Fail "dotnet not found. Install .NET 8 SDK from https:
 Write-OK "dotnet: $(& dotnet --version)"
 
 # Confirm source files exist
-foreach ($f in @($GuiProject, $SrcInstall, $SrcUninstall, $SrcReadme)) {
+foreach ($f in @($GuiProject)) {
     if (-not (Test-Path $f)) { Write-Fail "Expected source file not found: $f" }
 }
 Write-OK "Source files verified"
-
-# WinFSP SDK detection - controls whether the mount feature is compiled in.
-# The SDK (lib file) is only needed at build time; the runtime MSI is bundled
-# separately for end-users.
-$WinFspSdkLib = "C:\Program Files (x86)\WinFsp\lib\winfsp-x64.lib"
-$WinFspFeatureArgs = @()
-if (Test-Path $WinFspSdkLib) {
-    $WinFspFeatureArgs = @("--features", "winfsp")
-    Write-OK "WinFSP SDK found - building with virtual drive mount support"
-} else {
-    Write-Warn "WinFSP SDK not found at: $WinFspSdkLib"
-    Write-Warn "Virtual drive mount feature will be DISABLED in this build."
-    Write-Warn "To enable: install the WinFSP SDK from https://github.com/winfsp/winfsp/releases"
-}
 
 # ---------------------------------------------------------------------------
 # Build Rust CLI
@@ -98,7 +80,7 @@ if (Test-Path $WinFspSdkLib) {
 Write-Step "Building Rust CLI (release)"
 Push-Location $RepoRoot
 try {
-    & cargo build -p obsidianq-cli --release @WinFspFeatureArgs
+    & cargo build -p obsidianq-cli --release
     if ($LASTEXITCODE -ne 0) { Write-Fail "cargo build failed (exit $LASTEXITCODE)" }
 } finally { Pop-Location }
 
@@ -137,58 +119,11 @@ if (Test-Path $BundleDir) {
     }
 }
 if (-not (Test-Path $BundleDir)) { New-Item -ItemType Directory -Path $BundleDir | Out-Null }
-if (-not (Test-Path (Join-Path $BundleDir 'keys'))) {
-    New-Item -ItemType Directory -Path (Join-Path $BundleDir 'keys') | Out-Null
-}
 
 # Core binaries
 Copy-Item $RustCli   (Join-Path $BundleDir 'obsidianq.exe')
 Copy-Item $GuiPublish (Join-Path $BundleDir 'ObsidianQ.Launcher.exe')
 Write-OK "Copied binaries"
-
-# WinFSP runtime installer - bundled so the GUI can install it on-demand.
-# The MSI is expected in the repo root (not committed to git - add to .gitignore).
-$WinFspMsi = Get-ChildItem -Path $RepoRoot -Filter "winfsp-*.msi" -ErrorAction SilentlyContinue |
-             Sort-Object Name -Descending | Select-Object -First 1
-if ($WinFspMsi) {
-    Copy-Item $WinFspMsi.FullName (Join-Path $BundleDir $WinFspMsi.Name)
-    Write-OK "Bundled $($WinFspMsi.Name) (WinFSP runtime - installed on-demand)"
-} else {
-    Write-Warn "winfsp-*.msi not found in repo root - virtual drive mounting will require manual WinFSP install"
-    Write-Warn "Place the WinFSP MSI in: $RepoRoot"
-}
-
-# Install/uninstall scripts
-Copy-Item $SrcInstall   (Join-Path $BundleDir 'install_context_menu.cmd')
-Copy-Item $SrcUninstall (Join-Path $BundleDir 'uninstall_context_menu.cmd')
-Write-OK "Copied context-menu scripts"
-
-# README
-Copy-Item $SrcReadme (Join-Path $BundleDir 'README_TESTERS.md')
-Write-OK "Copied README_TESTERS.md"
-
-# keys/README_KEYS.txt  (ASCII-only to avoid encoding issues on PS5.1)
-$keysLines = @(
-    'ObsidianQ - PQC Key Generation',
-    '================================',
-    '',
-    'Use the CLI to generate a Kyber768 key pair:',
-    '',
-    '    obsidianq.exe keygen --pubkey recipient.pub.bin --privkey recipient.priv.bin',
-    '',
-    'Share  recipient.pub.bin  with anyone who needs to encrypt files for you.',
-    'Keep   recipient.priv.bin  private (do not share, do not put in cloud storage).',
-    '',
-    'Key sizes:',
-    '  Public  (encapsulation)  key : 1184 bytes (raw bytes)',
-    '  Private (decapsulation)  key : 2400 bytes (raw bytes)',
-    '',
-    'Using keys in the GUI:',
-    '  - Encrypt: toggle to PQC, browse to recipient.pub.bin',
-    '  - Decrypt: toggle to PQC, browse to recipient.priv.bin'
-)
-$keysLines | Set-Content (Join-Path $BundleDir 'keys\README_KEYS.txt') -Encoding UTF8
-Write-OK "Created keys/README_KEYS.txt"
 
 # ---------------------------------------------------------------------------
 # Zip
@@ -220,9 +155,8 @@ if (-not $NoZip -and (Test-Path $ZipPath)) {
     Write-Host "  Zip    : $ZipPath" -ForegroundColor Green
 }
 Write-Host ""
-Write-Host "  Hand testers:" -ForegroundColor White
-Write-Host "    1. Extract ObsidianQBundle.zip (or copy the folder)" -ForegroundColor White
-Write-Host "    2. Run install_context_menu.cmd  (once, no admin)" -ForegroundColor White
-Write-Host "    3. Double-click ObsidianQ.Launcher.exe  OR  right-click any file" -ForegroundColor White
+Write-Host "  Release contents:" -ForegroundColor White
+Write-Host "    - ObsidianQ.Launcher.exe" -ForegroundColor White
+Write-Host "    - obsidianq.exe" -ForegroundColor White
 Write-Host ""
 
