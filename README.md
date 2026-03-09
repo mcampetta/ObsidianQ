@@ -1,3 +1,5 @@
+<img width="783" height="706" alt="filetab" src="https://github.com/user-attachments/assets/6961b11a-a53b-42e5-8bb7-ee019da73034" />
+
 # ObsidianQ
 
 Local-first, high-performance encryption for files, text, and vault workflows.
