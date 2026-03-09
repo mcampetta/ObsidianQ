@@ -125,6 +125,27 @@ Copy-Item $RustCli   (Join-Path $BundleDir 'obsidianq.exe')
 Copy-Item $GuiPublish (Join-Path $BundleDir 'ObsidianQ.Launcher.exe')
 Write-OK "Copied binaries"
 
+# Bundle usage notes
+$bundleReadme = @(
+    'ObsidianQ Release Bundle',
+    '========================',
+    '',
+    'Important:',
+    '- Keep ObsidianQ.Launcher.exe and obsidianq.exe in the SAME folder.',
+    '- The launcher calls obsidianq.exe at runtime.',
+    '- If obsidianq.exe is missing or moved, launcher operations will fail.',
+    '',
+    'Recommended use:',
+    '1. Extract this bundle to a folder you control.',
+    '2. Run ObsidianQ.Launcher.exe from that folder.',
+    '3. Do not rename or relocate obsidianq.exe independently.',
+    '',
+    'Versioning:',
+    '- Replace both files together when updating releases.'
+)
+$bundleReadme | Set-Content (Join-Path $BundleDir 'README_BUNDLE.txt') -Encoding UTF8
+Write-OK "Created README_BUNDLE.txt"
+
 # ---------------------------------------------------------------------------
 # Zip
 # ---------------------------------------------------------------------------
@@ -158,5 +179,6 @@ Write-Host ""
 Write-Host "  Release contents:" -ForegroundColor White
 Write-Host "    - ObsidianQ.Launcher.exe" -ForegroundColor White
 Write-Host "    - obsidianq.exe" -ForegroundColor White
+Write-Host "    - README_BUNDLE.txt" -ForegroundColor White
 Write-Host ""
 

@@ -51,6 +51,10 @@ Core crypto building blocks used by the project include:
    - `Vault` for encrypted vault operations
    - `Secure Contacts` for identity/contact-based exchange
 
+Important:
+- `ObsidianQ.Launcher.exe` and `obsidianq.exe` must remain in the same folder.
+- The launcher invokes `obsidianq.exe` for runtime operations.
+
 ## Quick Start (CLI)
 
 From repository root:
@@ -113,4 +117,3 @@ See `docs/site/README.md` for publish instructions.
 
 ObsidianQ is built with strong primitives and practical defaults, but no software is risk-free.
 Validate your threat model, maintain backups, protect private keys, and keep dependencies/releases current.
-
