@@ -1,6 +1,19 @@
 "use strict";
 
 (function () {
+  const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+  if (!conn) return;
+
+  const saveDataEnabled = conn.saveData === true;
+  const networkType = String(conn.effectiveType || "").toLowerCase();
+  const slowNetwork = networkType.includes("2g");
+
+  if (saveDataEnabled || slowNetwork) {
+    document.body.classList.add("no-bg-video");
+  }
+})();
+
+(function () {
   const thumbs = Array.from(document.querySelectorAll(".lightbox-thumb"));
   const lightbox = document.getElementById("lightbox");
   const image = document.getElementById("lightbox-image");
