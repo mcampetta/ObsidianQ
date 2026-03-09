@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security guidance
+    url: https://github.com/mcampetta/ObsidianQ/blob/main/README.md
+    about: Review security and backup guidance before filing sensitive reports.

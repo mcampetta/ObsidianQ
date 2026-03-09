@@ -96,16 +96,37 @@ dotnet build tools/windows-gui/ObsidianQ.Launcher.csproj -c Debug
 
 Repository media used by the site:
 
-- `docs/site/assets/filetab.png`
-- `docs/site/assets/securecontacts.png`
-- `docs/site/assets/vault.png`
-- `docs/site/assets/demo.mp4`
+- `docs/assets/filetab.png`
+- `docs/assets/securecontacts.png`
+- `docs/assets/vault.png`
+- `docs/assets/demo.mp4`
 
 GitHub Pages template:
 
-- `docs/site/index.html`
+- `docs/index.html`
 
 See `docs/site/README.md` for publish instructions.
+
+## Releases and Integrity
+
+- Latest release: `https://github.com/mcampetta/ObsidianQ/releases/latest`
+- Release assets include:
+  - `ObsidianQBundle.zip`
+  - `ObsidianQBundle.sha256`
+- Verify bundle integrity before use:
+
+```powershell
+Get-FileHash .\ObsidianQBundle.zip -Algorithm SHA256
+```
+
+Compare the resulting hash with the published `.sha256` file.
+
+## Backup and Recovery
+
+- Key backup/recovery guide: `docs/KEY_RECOVERY_AND_BACKUP.md`
+- Use Settings in launcher:
+  - `BACKUP LOCAL KEYPAIR`
+  - `RESTORE LOCAL KEYPAIR`
 
 ## Current Notes
 

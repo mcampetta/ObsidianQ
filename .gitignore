@@ -24,3 +24,28 @@ Desktop.ini
 
 # Large local installers
 *.msi
+
+# Local working data / scratch artifacts
+/temp/
+/test/
+*.vault
+*.obsq
+*.obsqv
+*.obsqx
+*.obsqkeys
+err.txt
+out.txt
+mock_out.txt
+mock_err.txt
+mock_all.txt
+check_events.ps1
+ObsidianQ_session_handoff_*.txt
+docs/SESSION_HANDOFF_*.md
+docs/FUTURE_CHAT_PLAN.md
+docs/site/assets/
+tools.zip
+winfsp_layout_probe.obj
+tools/winfsp_layout_probe.exe
+tools/winfsp_layout_probe.c
+/tools/relay-server/target/
+/tools/relay-server/
