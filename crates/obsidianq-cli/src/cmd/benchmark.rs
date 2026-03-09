@@ -61,8 +61,8 @@ pub fn run(args: BenchmarkArgs) -> Result<()> {
                 let params = EncryptParams {
                     master_key,
                     kem_data: vec![0u8; 32], // dummy salt
-                    mode:     Mode::Password,
-                    suite:    *suite,
+                    mode: Mode::Password,
+                    suite: *suite,
                     chunk_size: DEFAULT_CHUNK_SIZE,
                     compress: *compress,
                     file_id,

@@ -11,9 +11,10 @@ edition.workspace = true
 winfsp = []
 
 [dependencies]
-obsidianq-core.workspace = true
-thiserror.workspace      = true
-zeroize.workspace        = true
+obsidianq-core.workspace  = true
+obsidianq-vault.workspace = true
+thiserror.workspace       = true
+zeroize.workspace         = true
 
 # Windows APIs: named events (IPC) + LoadLibrary (WinFSP detection)
 windows-sys.workspace = true

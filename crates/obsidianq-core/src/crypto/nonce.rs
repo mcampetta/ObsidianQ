@@ -27,7 +27,7 @@ use crate::error::{ObsidianError, Result};
 
 // Suite bytes must match SuiteId repr values in format.rs.
 const SUITE_XCHACHA20: u8 = 0x00;
-const SUITE_AESGCM:    u8 = 0x01;
+const SUITE_AESGCM: u8 = 0x01;
 
 /// Derive a 24-byte nonce for XChaCha20-Poly1305.
 pub fn derive_xchacha20_nonce(file_id: &[u8; 16], chunk_index: u64) -> Result<[u8; 24]> {
@@ -48,10 +48,10 @@ pub fn derive_aesgcm_nonce(file_id: &[u8; 16], chunk_index: u64) -> Result<[u8; 
 }
 
 fn derive_nonce_bytes(
-    file_id:     &[u8; 16],
+    file_id: &[u8; 16],
     chunk_index: u64,
-    suite_byte:  u8,
-    out:         &mut [u8],
+    suite_byte: u8,
+    out: &mut [u8],
 ) -> Result<()> {
     // IKM: file_id (16 B) || chunk_index LE (8 B) — fixed-width, no ambiguity.
     let mut ikm = [0u8; 24];

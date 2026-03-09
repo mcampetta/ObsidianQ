@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/obsidianq-core",
+    "crates/obsidianq-vault",
     "crates/obsidianq-cli",
     "crates/obsidianq-bench",
     "crates/obsidianq-fs",
@@ -60,8 +61,9 @@ tracing          = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Internal crates
-obsidianq-core   = { path = "crates/obsidianq-core" }
-obsidianq-fs     = { path = "crates/obsidianq-fs" }
+obsidianq-core  = { path = "crates/obsidianq-core" }
+obsidianq-vault = { path = "crates/obsidianq-vault" }
+obsidianq-fs    = { path = "crates/obsidianq-fs" }
 
 # Windows APIs (used by obsidianq-fs for WinFSP FFI + named events)
 windows-sys      = { version = "0.59", features = [

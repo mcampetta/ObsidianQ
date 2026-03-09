@@ -19,7 +19,7 @@ use obsidianq_core::{
 
 fn make_master() -> ([u8; 32], [u8; 16]) {
     let mut key = [0u8; 32];
-    let mut id  = [0u8; 16];
+    let mut id = [0u8; 16];
     rand::thread_rng().fill_bytes(&mut key);
     rand::thread_rng().fill_bytes(&mut id);
     (key, id)
@@ -30,8 +30,8 @@ fn encrypt_buf(plaintext: &[u8], suite: SuiteId, compress: bool) -> Vec<u8> {
     let master_key = MasterKey::from_bytes(raw);
     let params = EncryptParams {
         master_key,
-        kem_data:   vec![0u8; 32],
-        mode:       Mode::Password,
+        kem_data: vec![0u8; 32],
+        mode: Mode::Password,
         suite,
         chunk_size: DEFAULT_CHUNK_SIZE,
         compress,
@@ -96,11 +96,11 @@ fn bench_decrypt(c: &mut Criterion) {
             let mk = MasterKey::from_bytes(raw);
             let params = EncryptParams {
                 master_key: mk,
-                kem_data:   vec![0u8; 32],
-                mode:       Mode::Password,
-                suite:      SuiteId::XChaCha20Poly1305,
+                kem_data: vec![0u8; 32],
+                mode: Mode::Password,
+                suite: SuiteId::XChaCha20Poly1305,
                 chunk_size: DEFAULT_CHUNK_SIZE,
-                compress:   false,
+                compress: false,
                 file_id,
             };
             let mut out = Cursor::new(Vec::new());

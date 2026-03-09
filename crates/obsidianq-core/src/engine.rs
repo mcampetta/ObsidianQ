@@ -18,6 +18,7 @@
 //! substitution even if K_master were ever reused.
 
 use std::io::{Read, Seek, SeekFrom, Write};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use rayon::prelude::*;
 use zeroize::Zeroize;
@@ -27,7 +28,7 @@ use crate::crypto::{
     kdf::{self, MasterKey},
 };
 use crate::error::{ObsidianError, Result};
-use crate::format::{self, ChunkRecord, FileFooter, FileHeader, SuiteId, flags};
+use crate::format::{self, flags, ChunkRecord, FileFooter, FileHeader, SuiteId};
 
 pub const DEFAULT_CHUNK_SIZE: u32 = 1024 * 1024; // 1 MiB
 
@@ -59,19 +60,34 @@ pub struct EncryptParams {
     /// KEM data embedded in header:
     ///   Password mode : 32-byte Argon2id salt
     ///   PQC mode      : 1088-byte KEM ciphertext || 32-byte HKDF salt
-    pub kem_data:   Vec<u8>,
-    pub mode:       format::Mode,
-    pub suite:      SuiteId,
+    pub kem_data: Vec<u8>,
+    pub mode: format::Mode,
+    pub suite: SuiteId,
     pub chunk_size: u32,
-    pub compress:   bool,
+    pub compress: bool,
     /// Random 16-byte file ID (caller generates this).
-    pub file_id:    [u8; 16],
+    pub file_id: [u8; 16],
 }
 
 /// Encrypt `reader` → write `.obsq` format to `writer`.
 ///
 /// Returns number of chunks written.
 pub fn encrypt<R, W>(params: EncryptParams, reader: &mut R, writer: &mut W) -> Result<u64>
+where
+    R: Read,
+    W: Write,
+{
+    encrypt_with_progress(params, reader, writer, None)
+}
+
+/// Encrypt with optional byte-progress counter.
+/// The counter accumulates plaintext bytes processed by encrypted chunks.
+pub fn encrypt_with_progress<R, W>(
+    params: EncryptParams,
+    reader: &mut R,
+    writer: &mut W,
+    progress_bytes: Option<&AtomicU64>,
+) -> Result<u64>
 where
     R: Read,
     W: Write,
@@ -91,20 +107,24 @@ where
     };
 
     // 3. Build header (MAC field zeroed for now — filled in step 5).
-    let flags_byte = if params.compress { flags::COMPRESSED } else { 0 };
+    let flags_byte = if params.compress {
+        flags::COMPRESSED
+    } else {
+        0
+    };
     let mut header = FileHeader {
-        version:    format::VERSION,
-        mode:       params.mode,
-        suite:      params.suite,
-        flags:      flags_byte,
+        version: format::VERSION,
+        mode: params.mode,
+        suite: params.suite,
+        flags: flags_byte,
         chunk_size: params.chunk_size,
-        file_id:    params.file_id,
-        kem_data:   params.kem_data,
-        mac:        [0u8; 32],
+        file_id: params.file_id,
+        kem_data: params.kem_data,
+        mac: [0u8; 32],
     };
 
     // 4. Canonical header bytes for MAC computation (excludes the mac field).
-    let canonical     = header.canonical_bytes_for_mac();
+    let canonical = header.canonical_bytes_for_mac();
     let header_hash: [u8; 32] = blake3::hash(&canonical).into();
 
     // 5. Header MAC — domain-separated so it can never collide with footer MAC.
@@ -115,7 +135,7 @@ where
     header.write_to(writer)?;
 
     // 7. Split body into chunks and encrypt in parallel.
-    let cs      = params.chunk_size as usize;
+    let cs = params.chunk_size as usize;
     let chunks: Vec<&[u8]> = body.chunks(cs).collect();
     let n_chunks = chunks.len() as u64;
 
@@ -123,18 +143,17 @@ where
         .into_par_iter()
         .enumerate()
         .map(|(i, chunk)| {
-            let idx    = i as u64;
+            let idx = i as u64;
             let subkey = kdf::derive_chunk_key(&params.master_key, &header_hash, idx)?;
-            let aad    = build_aad(&header_hash, idx);
-            let ct     = aead::encrypt_chunk(
-                params.suite,
-                &subkey,
-                &params.file_id,
-                idx,
-                chunk,
-                &aad,
-            )?;
-            Ok(ChunkRecord { index: idx, ciphertext: ct })
+            let aad = build_aad(&header_hash, idx);
+            let ct = aead::encrypt_chunk(params.suite, &subkey, &params.file_id, idx, chunk, &aad)?;
+            if let Some(counter) = progress_bytes {
+                counter.fetch_add(chunk.len() as u64, Ordering::Relaxed);
+            }
+            Ok(ChunkRecord {
+                index: idx,
+                ciphertext: ct,
+            })
         })
         .collect();
 
@@ -160,7 +179,11 @@ where
         &[header_hash.as_slice(), &tag_accumulator],
     );
 
-    FileFooter { chunk_count: n_chunks, global_mac }.write_to(writer)?;
+    FileFooter {
+        chunk_count: n_chunks,
+        global_mac,
+    }
+    .write_to(writer)?;
 
     Ok(n_chunks)
 }
@@ -183,6 +206,21 @@ where
     R: Read,
     W: Write,
 {
+    decrypt_with_progress(master_key, reader, writer, None)
+}
+
+/// Decrypt with optional byte-progress counter.
+/// The counter accumulates plaintext bytes produced by decrypted chunks.
+pub fn decrypt_with_progress<R, W>(
+    master_key: &MasterKey,
+    reader: &mut R,
+    writer: &mut W,
+    progress_bytes: Option<&AtomicU64>,
+) -> Result<()>
+where
+    R: Read,
+    W: Write,
+{
     // 1. Read the full file into memory.  The footer is at the tail so we
     //    cannot avoid buffering the whole file unless the caller provides Seek.
     //    EXTENSION POINT: accept R: Read + Seek to avoid this.
@@ -192,16 +230,19 @@ where
     // 2. Parse and verify header.
     let (header, mut pos) = {
         let mut cur = std::io::Cursor::new(&raw);
-        let h   = FileHeader::read_from(&mut cur)?;
+        let h = FileHeader::read_from(&mut cur)?;
         let end = cur.position() as usize;
         (h, end)
     };
 
-    let canonical    = header.canonical_bytes_for_mac();
+    let canonical = header.canonical_bytes_for_mac();
     let header_hash: [u8; 32] = blake3::hash(&canonical).into();
 
     let expected_mac = mac_keyed(master_key.as_bytes(), DOMAIN_HEADER, &[&canonical]);
-    if !bool::from(subtle::ConstantTimeEq::ct_eq(expected_mac.as_slice(), header.mac.as_slice())) {
+    if !bool::from(subtle::ConstantTimeEq::ct_eq(
+        expected_mac.as_slice(),
+        header.mac.as_slice(),
+    )) {
         return Err(ObsidianError::HeaderMacFailure);
     }
 
@@ -209,7 +250,10 @@ where
     //    Footer layout: chunk_count (u64 LE) || global_mac ([u8; 32]) = 40 bytes.
     const FOOTER_SIZE: usize = 8 + 32;
     if raw.len() < FOOTER_SIZE {
-        return Err(ObsidianError::TruncatedHeader { needed: FOOTER_SIZE, got: raw.len() });
+        return Err(ObsidianError::TruncatedHeader {
+            needed: FOOTER_SIZE,
+            got: raw.len(),
+        });
     }
     let footer_offset = raw.len() - FOOTER_SIZE;
     let footer = {
@@ -231,22 +275,27 @@ where
         if pos + 12 > body_end {
             return Err(ObsidianError::TruncatedHeader {
                 needed: pos + 12,
-                got:    body_end,
+                got: body_end,
             });
         }
         let idx = u64::from_le_bytes([
-            raw[pos],   raw[pos+1], raw[pos+2], raw[pos+3],
-            raw[pos+4], raw[pos+5], raw[pos+6], raw[pos+7],
+            raw[pos],
+            raw[pos + 1],
+            raw[pos + 2],
+            raw[pos + 3],
+            raw[pos + 4],
+            raw[pos + 5],
+            raw[pos + 6],
+            raw[pos + 7],
         ]);
-        let ct_len = u32::from_le_bytes([
-            raw[pos+8], raw[pos+9], raw[pos+10], raw[pos+11],
-        ]) as usize;
+        let ct_len =
+            u32::from_le_bytes([raw[pos + 8], raw[pos + 9], raw[pos + 10], raw[pos + 11]]) as usize;
         pos += 12;
 
         if pos + ct_len > body_end {
             return Err(ObsidianError::TruncatedHeader {
                 needed: pos + ct_len,
-                got:    body_end,
+                got: body_end,
             });
         }
         chunk_refs.push((idx, pos, pos + ct_len));
@@ -257,7 +306,7 @@ where
     if footer.chunk_count != chunk_refs.len() as u64 {
         return Err(ObsidianError::ChunkIndexMismatch {
             expected: footer.chunk_count,
-            got:      chunk_refs.len() as u64,
+            got: chunk_refs.len() as u64,
         });
     }
 
@@ -265,8 +314,8 @@ where
     //    Tag accumulator: last 16 bytes of each ciphertext, in chunk order.
     let mut tag_acc: Vec<u8> = Vec::with_capacity(chunk_refs.len() * 16);
     for (_, ct_start, ct_end) in &chunk_refs {
-        let ct       = &raw[*ct_start..*ct_end];
-        let tag_off  = ct.len().saturating_sub(16);
+        let ct = &raw[*ct_start..*ct_end];
+        let tag_off = ct.len().saturating_sub(16);
         tag_acc.extend_from_slice(&ct[tag_off..]);
     }
 
@@ -275,24 +324,30 @@ where
         DOMAIN_FOOTER,
         &[header_hash.as_slice(), &tag_acc],
     );
-    if !bool::from(subtle::ConstantTimeEq::ct_eq(expected_global.as_slice(), footer.global_mac.as_slice())) {
+    if !bool::from(subtle::ConstantTimeEq::ct_eq(
+        expected_global.as_slice(),
+        footer.global_mac.as_slice(),
+    )) {
         return Err(ObsidianError::FooterMacFailure);
     }
 
     // 7. Parallel AEAD decryption over zero-copy slices into `raw`.
     //    rayon distributes chunks across thread pool; each closure borrows
     //    `raw` immutably (safe — no writes during parallel phase).
-    let suite   = header.suite;
+    let suite = header.suite;
     let file_id = header.file_id;
 
     let plaintexts: Vec<Result<(u64, Vec<u8>)>> = chunk_refs
         .par_iter()
         .map(|(idx, ct_start, ct_end)| {
-            let ct     = &raw[*ct_start..*ct_end];
+            let ct = &raw[*ct_start..*ct_end];
             let subkey = kdf::derive_chunk_key(master_key, &header_hash, *idx)?;
-            let aad    = build_aad(&header_hash, *idx);
-            let pt     = aead::decrypt_chunk(suite, &subkey, &file_id, *idx, ct, &aad)
+            let aad = build_aad(&header_hash, *idx);
+            let pt = aead::decrypt_chunk(suite, &subkey, &file_id, *idx, ct, &aad)
                 .map_err(|_| ObsidianError::ChunkAuthFailure { index: *idx })?;
+            if let Some(counter) = progress_bytes {
+                counter.fetch_add(pt.len() as u64, Ordering::Relaxed);
+            }
             Ok((*idx, pt))
         })
         .collect();
@@ -306,7 +361,7 @@ where
         // Compressed path: build contiguous buffer, decompress, write.
         // Pre-size the buffer to avoid reallocations.
         let total_pt_len: usize = ordered.iter().map(|(_, pt)| pt.len()).sum();
-        let mut body: Vec<u8>   = Vec::with_capacity(total_pt_len);
+        let mut body: Vec<u8> = Vec::with_capacity(total_pt_len);
         for (_, pt) in &ordered {
             body.extend_from_slice(pt);
         }
@@ -353,10 +408,10 @@ impl ChunkRef {
 /// Created by `open_container()`.  Used by the virtual-filesystem layer to
 /// perform lazy, per-chunk decryption on demand.
 pub struct ContainerManifest {
-    pub header:      FileHeader,
+    pub header: FileHeader,
     pub header_hash: [u8; 32],
     /// Chunk byte-range map, sorted by chunk index.
-    pub chunk_refs:  Vec<ChunkRef>,
+    pub chunk_refs: Vec<ChunkRef>,
     /// Total decrypted plaintext size in bytes.
     /// Accurate only for non-compressed containers.
     pub total_plaintext_len: u64,
@@ -377,7 +432,7 @@ pub struct ContainerManifest {
 ///   as random-access virtual files.
 pub fn open_container<R: Read + Seek>(
     master_key: &kdf::MasterKey,
-    reader:     &mut R,
+    reader: &mut R,
 ) -> Result<ContainerManifest> {
     // 1. Seek to start and parse the header.  Record the stream position
     //    immediately after, which is the first byte of the chunk body.
@@ -390,15 +445,19 @@ pub fn open_container<R: Read + Seek>(
     if header.flags & flags::COMPRESSED != 0 {
         return Err(ObsidianError::CompressionError(
             "cannot mount compressed container: plaintext size unknown \
-             without full decompression (Phase 1 limitation)".into(),
+             without full decompression (Phase 1 limitation)"
+                .into(),
         ));
     }
 
     // 3. Verify header MAC.
-    let canonical    = header.canonical_bytes_for_mac();
+    let canonical = header.canonical_bytes_for_mac();
     let header_hash: [u8; 32] = blake3::hash(&canonical).into();
     let expected_mac = mac_keyed(master_key.as_bytes(), DOMAIN_HEADER, &[&canonical]);
-    if !bool::from(subtle::ConstantTimeEq::ct_eq(expected_mac.as_slice(), header.mac.as_slice())) {
+    if !bool::from(subtle::ConstantTimeEq::ct_eq(
+        expected_mac.as_slice(),
+        header.mac.as_slice(),
+    )) {
         return Err(ObsidianError::HeaderMacFailure);
     }
 
@@ -408,7 +467,7 @@ pub fn open_container<R: Read + Seek>(
     if file_len < body_start + FOOTER_SIZE {
         return Err(ObsidianError::TruncatedHeader {
             needed: (body_start + FOOTER_SIZE) as usize,
-            got:    file_len as usize,
+            got: file_len as usize,
         });
     }
     let footer_offset = file_len - FOOTER_SIZE;
@@ -426,17 +485,21 @@ pub fn open_container<R: Read + Seek>(
         let mut rec_hdr = [0u8; 12];
         reader.read_exact(&mut rec_hdr)?;
 
-        let idx    = u64::from_le_bytes(rec_hdr[0..8].try_into().unwrap());
+        let idx = u64::from_le_bytes(rec_hdr[0..8].try_into().unwrap());
         let ct_len = u32::from_le_bytes(rec_hdr[8..12].try_into().unwrap()) as usize;
         let ct_file_offset = pos + 12;
 
         if ct_file_offset + ct_len as u64 > footer_offset {
             return Err(ObsidianError::TruncatedHeader {
                 needed: (ct_file_offset + ct_len as u64) as usize,
-                got:    footer_offset as usize,
+                got: footer_offset as usize,
             });
         }
-        chunk_refs.push(ChunkRef { index: idx, ct_file_offset, ct_len });
+        chunk_refs.push(ChunkRef {
+            index: idx,
+            ct_file_offset,
+            ct_len,
+        });
 
         pos = ct_file_offset + ct_len as u64;
         reader.seek(SeekFrom::Start(pos))?;
@@ -446,7 +509,7 @@ pub fn open_container<R: Read + Seek>(
     if footer.chunk_count != chunk_refs.len() as u64 {
         return Err(ObsidianError::ChunkIndexMismatch {
             expected: footer.chunk_count,
-            got:      chunk_refs.len() as u64,
+            got: chunk_refs.len() as u64,
         });
     }
 
@@ -480,7 +543,12 @@ pub fn open_container<R: Read + Seek>(
 
     let total_plaintext_len: u64 = chunk_refs.iter().map(|r| r.plaintext_len() as u64).sum();
 
-    Ok(ContainerManifest { header, header_hash, chunk_refs, total_plaintext_len })
+    Ok(ContainerManifest {
+        header,
+        header_hash,
+        chunk_refs,
+        total_plaintext_len,
+    })
 }
 
 /// Compute the BLAKE3 hash of the canonical serialised header (excludes mac).

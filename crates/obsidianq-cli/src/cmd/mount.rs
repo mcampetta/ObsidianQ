@@ -1,4 +1,4 @@
-﻿//! `obsidianq mount` â€” mount a container as a read-only virtual drive.
+//! `obsidianq mount` â€” mount a container as a read-only virtual drive.
 //!
 //! Usage:
 //!   obsidianq mount --in vault.obsq --drive Z: --password-stdin
@@ -17,8 +17,8 @@ use zeroize::{Zeroize, Zeroizing};
 
 use obsidianq_core::{
     crypto::{
-        kem::{self, CT_BYTES, DK_BYTES},
         kdf::{self, Argon2Params},
+        kem::{self, CT_BYTES, DK_BYTES},
     },
     format::{FileHeader, Mode},
     open_container,
@@ -48,7 +48,11 @@ pub struct MountArgs {
 
 pub fn run(args: MountArgs) -> Result<()> {
     // â”€â”€ Validate drive letter â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    let dl = args.drive.trim_end_matches(':').chars().next()
+    let dl = args
+        .drive
+        .trim_end_matches(':')
+        .chars()
+        .next()
         .context("--drive must be a letter such as Z or Z:")?
         .to_ascii_uppercase();
     if !('A'..='Z').contains(&dl) {
@@ -65,9 +69,7 @@ pub fn run(args: MountArgs) -> Result<()> {
     }
 
     // â”€â”€ Peek at header to determine mode â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    let mut peek = BufReader::new(
-        fs::File::open(&args.r#in).context("open container")?,
-    );
+    let mut peek = BufReader::new(fs::File::open(&args.r#in).context("open container")?);
     let header = FileHeader::read_from(&mut peek).context("parse container header")?;
 
     // â”€â”€ Derive master key â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -78,19 +80,22 @@ pub fn run(args: MountArgs) -> Result<()> {
             }
             let password = if args.password_stdin {
                 let mut raw = String::new();
-                std::io::stdin().lock().read_line(&mut raw)
+                std::io::stdin()
+                    .lock()
+                    .read_line(&mut raw)
                     .context("read password from stdin")?;
                 let pw = Zeroizing::new(raw.trim_end_matches(['\r', '\n']).to_owned());
                 raw.zeroize();
                 pw
             } else {
-                Zeroizing::new(
-                    rpassword::prompt_password("Password: ").context("password prompt")?,
-                )
+                Zeroizing::new(rpassword::prompt_password("Password: ").context("password prompt")?)
             };
 
             if header.kem_data.len() != 32 {
-                bail!("malformed header: expected 32-byte salt, got {}", header.kem_data.len());
+                bail!(
+                    "malformed header: expected 32-byte salt, got {}",
+                    header.kem_data.len()
+                );
             }
             let mut salt = [0u8; 32];
             salt.copy_from_slice(&header.kem_data);
@@ -98,17 +103,26 @@ pub fn run(args: MountArgs) -> Result<()> {
                 .context("key derivation")?
         }
         Mode::Pqc => {
-            let pk_path = args.privkey.as_ref()
+            let pk_path = args
+                .privkey
+                .as_ref()
                 .context("PQC-mode container: use --privkey <private-key.bin>")?;
             let dk_raw = read_priv(pk_path).context("read private key")?;
             if dk_raw.len() != DK_BYTES {
-                bail!("private key is {} bytes, expected {}", dk_raw.len(), DK_BYTES);
+                bail!(
+                    "private key is {} bytes, expected {}",
+                    dk_raw.len(),
+                    DK_BYTES
+                );
             }
             let dk_arr: [u8; DK_BYTES] = dk_raw
                 .try_into()
                 .map_err(|_| anyhow::anyhow!("private key has wrong length"))?;
             if header.kem_data.len() != CT_BYTES + 32 {
-                bail!("malformed header: expected {} bytes KEM data", CT_BYTES + 32);
+                bail!(
+                    "malformed header: expected {} bytes KEM data",
+                    CT_BYTES + 32
+                );
             }
             let ct_arr: [u8; CT_BYTES] = header.kem_data[..CT_BYTES]
                 .try_into()
@@ -121,11 +135,8 @@ pub fn run(args: MountArgs) -> Result<()> {
     };
 
     // â”€â”€ Build the seekable container manifest (verifies both MACs) â”€â”€â”€â”€â”€â”€â”€â”€
-    let mut reader = BufReader::new(
-        fs::File::open(&args.r#in).context("open container")?,
-    );
-    let manifest = open_container(&master_key, &mut reader)
-        .context("open container manifest")?;
+    let mut reader = BufReader::new(fs::File::open(&args.r#in).context("open container")?);
+    let manifest = open_container(&master_key, &mut reader).context("open container manifest")?;
 
     println!("Container verified:");
     println!("  File      : {}", args.r#in.display());
@@ -134,8 +145,5 @@ pub fn run(args: MountArgs) -> Result<()> {
     println!("  Mount at  : {dl}:");
 
     // â”€â”€ Mount (blocks until Ctrl+C or unmount command) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    mount_container(&args.r#in, master_key, manifest, dl)
-        .map_err(|e| anyhow::anyhow!("{e}"))
+    mount_container(&args.r#in, master_key, manifest, dl).map_err(|e| anyhow::anyhow!("{e}"))
 }
-
-

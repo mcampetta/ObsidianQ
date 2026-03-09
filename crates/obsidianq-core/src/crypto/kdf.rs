@@ -55,7 +55,7 @@ pub fn derive_root_key(ikm: &[u8], salt: &[u8]) -> Result<MasterKey> {
 /// the full header.  Two files sharing K_master but with different headers
 /// derive orthogonal PRKs and therefore orthogonal chunk keys.
 pub fn derive_chunk_key(
-    master:      &MasterKey,
+    master: &MasterKey,
     header_hash: &[u8; 32],
     chunk_index: u64,
 ) -> Result<ChunkKey> {
@@ -68,7 +68,8 @@ pub fn derive_chunk_key(
     info.extend_from_slice(&chunk_index.to_le_bytes());
 
     let mut okm = [0u8; 32];
-    hk.expand(&info, &mut okm).map_err(|_| ObsidianError::KdfError)?;
+    hk.expand(&info, &mut okm)
+        .map_err(|_| ObsidianError::KdfError)?;
     Ok(ChunkKey(okm))
 }
 
@@ -112,8 +113,8 @@ impl Default for Argon2Params {
 /// Derive a 32-byte key from a password + 32-byte salt using Argon2id.
 pub fn derive_password_key(
     password: &[u8],
-    salt:     &[u8; 32],
-    params:   &Argon2Params,
+    salt: &[u8; 32],
+    params: &Argon2Params,
 ) -> Result<MasterKey> {
     use argon2::{Algorithm, Argon2, Params, Version};
 

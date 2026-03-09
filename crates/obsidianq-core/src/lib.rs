@@ -11,8 +11,12 @@ pub mod crypto;
 pub mod engine;
 pub mod error;
 pub mod format;
+pub mod secure_connect;
 
 // Re-export the most-used items for convenience.
-pub use engine::{decrypt, encrypt, open_container, hash_header, EncryptParams, ContainerManifest, ChunkRef, DEFAULT_CHUNK_SIZE};
+pub use engine::{
+    decrypt, encrypt, hash_header, open_container, ChunkRef, ContainerManifest, EncryptParams,
+    DEFAULT_CHUNK_SIZE,
+};
 pub use error::{ObsidianError, Result};
 pub use format::{Mode, SuiteId};

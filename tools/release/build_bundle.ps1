@@ -126,9 +126,20 @@ Write-OK "ObsidianQ.Launcher.exe published  ($guiSize MB)"
 Write-Step "Staging bundle to $BundleDir"
 
 # Clean and recreate bundle dir
-if (Test-Path $BundleDir) { Remove-Item $BundleDir -Recurse -Force }
-New-Item -ItemType Directory -Path $BundleDir | Out-Null
-New-Item -ItemType Directory -Path (Join-Path $BundleDir 'keys') | Out-Null
+# If Remove-Item fails (e.g. Explorer or a file watcher holds the directory open)
+# fall back to removing only the contents so we can still overwrite with fresh files.
+if (Test-Path $BundleDir) {
+    $removed = $false
+    try { Remove-Item $BundleDir -Recurse -Force; $removed = $true } catch {}
+    if (-not $removed) {
+        Write-Warn "Could not delete bundle dir (locked). Clearing contents instead."
+        Get-ChildItem $BundleDir -Force | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+if (-not (Test-Path $BundleDir)) { New-Item -ItemType Directory -Path $BundleDir | Out-Null }
+if (-not (Test-Path (Join-Path $BundleDir 'keys'))) {
+    New-Item -ItemType Directory -Path (Join-Path $BundleDir 'keys') | Out-Null
+}
 
 # Core binaries
 Copy-Item $RustCli   (Join-Path $BundleDir 'obsidianq.exe')

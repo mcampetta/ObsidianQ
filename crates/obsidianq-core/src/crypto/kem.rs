@@ -15,9 +15,7 @@
 //!   SharedSecret     :   32 bytes
 
 use pqcrypto_kyber::kyber768;
-use pqcrypto_traits::kem::{
-    Ciphertext as _, PublicKey as _, SecretKey as _, SharedSecret as _,
-};
+use pqcrypto_traits::kem::{Ciphertext as _, PublicKey as _, SecretKey as _, SharedSecret as _};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::error::{ObsidianError, Result};
@@ -87,14 +85,11 @@ pub fn encapsulate(ek_bytes: &[u8; EK_BYTES]) -> Result<([u8; CT_BYTES], SharedS
 }
 
 /// Decapsulate: recover the shared secret from a ciphertext using the private key.
-pub fn decapsulate(
-    dk_bytes: &[u8; DK_BYTES],
-    ct_bytes: &[u8; CT_BYTES],
-) -> Result<SharedSecret> {
+pub fn decapsulate(dk_bytes: &[u8; DK_BYTES], ct_bytes: &[u8; CT_BYTES]) -> Result<SharedSecret> {
     let sk = kyber768::SecretKey::from_bytes(dk_bytes)
         .map_err(|e| ObsidianError::InvalidPrivateKey(e.to_string()))?;
-    let ct = kyber768::Ciphertext::from_bytes(ct_bytes)
-        .map_err(|_| ObsidianError::KemDecapFailure)?;
+    let ct =
+        kyber768::Ciphertext::from_bytes(ct_bytes).map_err(|_| ObsidianError::KemDecapFailure)?;
 
     let ss = kyber768::decapsulate(&ct, &sk);
 

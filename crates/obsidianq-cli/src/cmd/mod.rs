@@ -1,10 +1,15 @@
-﻿pub mod benchmark;
+pub mod benchmark;
+pub mod contacts;
 pub mod decrypt;
 pub mod encrypt;
+pub mod exchange;
 pub mod inspect;
+pub mod key;
 pub mod keygen;
 pub mod mount;
+pub mod secure_connect;
 pub mod unmount;
+pub mod vault;
 
 use anyhow::{Context, Result};
 use base64ct::{Base64, Encoding};
@@ -12,8 +17,8 @@ use std::path::Path;
 
 // Key file I/O helpers
 
-const PUB_HEADER:  &str = "-----BEGIN OBSIDIANQ PUBLIC KEY-----";
-const PUB_FOOTER:  &str = "-----END OBSIDIANQ PUBLIC KEY-----";
+const PUB_HEADER: &str = "-----BEGIN OBSIDIANQ PUBLIC KEY-----";
+const PUB_FOOTER: &str = "-----END OBSIDIANQ PUBLIC KEY-----";
 const PRIV_HEADER: &str = "-----BEGIN OBSIDIANQ PRIVATE KEY-----";
 const PRIV_FOOTER: &str = "-----END OBSIDIANQ PRIVATE KEY-----";
 
@@ -32,11 +37,9 @@ pub fn write_priv(path: &Path, raw: &[u8]) -> Result<()> {
     if is_pem_path(path) {
         let b64 = Base64::encode_string(raw);
         let pem = format!("{}\n{}\n{}\n", PRIV_HEADER, b64, PRIV_FOOTER);
-        std::fs::write(path, pem)
-            .map_err(|e| anyhow::anyhow!("write private key: {e}"))?;
+        std::fs::write(path, pem).map_err(|e| anyhow::anyhow!("write private key: {e}"))?;
     } else {
-        std::fs::write(path, raw)
-            .map_err(|e| anyhow::anyhow!("write private key: {e}"))?;
+        std::fs::write(path, raw).map_err(|e| anyhow::anyhow!("write private key: {e}"))?;
     }
     Ok(())
 }
@@ -77,7 +80,10 @@ fn decode_pem(s: &str, header: &str, footer: &str) -> Result<Vec<u8>> {
         .map(|i| start + i)
         .with_context(|| format!("PEM footer '{footer}' not found"))?;
 
-    let b64: String = s[start..end].chars().filter(|c| !c.is_whitespace()).collect();
+    let b64: String = s[start..end]
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
     let bytes = Base64::decode_vec(&b64).map_err(|e| anyhow::anyhow!("base64 decode: {e}"))?;
     Ok(bytes)
 }

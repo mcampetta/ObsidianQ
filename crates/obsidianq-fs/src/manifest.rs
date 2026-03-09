@@ -9,25 +9,27 @@ pub use obsidianq_core::{ChunkRef, ContainerManifest};
 /// All chunks have the same plaintext size (`header.chunk_size`) except the
 /// last, which may be smaller.
 pub fn chunks_for_range<'a>(
-    manifest:  &'a ContainerManifest,
-    offset:    u64,
-    length:    usize,
+    manifest: &'a ContainerManifest,
+    offset: u64,
+    length: usize,
 ) -> &'a [ChunkRef] {
     if length == 0 || manifest.chunk_refs.is_empty() {
         return &[];
     }
     let chunk_size = manifest.header.chunk_size as u64;
-    let end = offset.saturating_add(length as u64).min(manifest.total_plaintext_len);
+    let end = offset
+        .saturating_add(length as u64)
+        .min(manifest.total_plaintext_len);
     if offset >= end {
         return &[];
     }
 
     let first = (offset / chunk_size) as usize;
-    let last  = ((end - 1) / chunk_size) as usize;
+    let last = ((end - 1) / chunk_size) as usize;
 
     let n = manifest.chunk_refs.len();
     let first = first.min(n);
-    let last  = (last + 1).min(n);
+    let last = (last + 1).min(n);
     &manifest.chunk_refs[first..last]
 }
 

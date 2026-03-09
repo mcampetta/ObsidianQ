@@ -25,6 +25,10 @@
     <Description>ObsidianQ post-quantum encryption launcher</Description>
   </PropertyGroup>
 
+  <ItemGroup>
+    <PackageReference Include="QRCoder" Version="1.4.3" />
+  </ItemGroup>
+
   <!-- Add <ApplicationIcon>obsidianq.ico</ApplicationIcon> and an icon file to use a custom icon -->
 
 </Project>

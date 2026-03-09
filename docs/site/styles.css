@@ -1,0 +1,281 @@
+:root {
+  --bg: #0b1015;
+  --panel: #121922;
+  --panel-2: #151f2b;
+  --text: #e6edf3;
+  --muted: #93a2b2;
+  --accent: #00d47a;
+  --border: #263241;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", "Inter", system-ui, -apple-system, sans-serif;
+  background: radial-gradient(1200px 800px at 15% -15%, #16212d 0%, var(--bg) 55%);
+  color: var(--text);
+  line-height: 1.5;
+}
+
+.wrap {
+  width: min(1040px, 92%);
+  margin: 0 auto;
+}
+
+.hero {
+  border-bottom: 1px solid var(--border);
+  padding: 3.4rem 0 2.6rem;
+}
+
+.eyebrow {
+  margin: 0 0 0.5rem;
+  color: var(--accent);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 0.78rem;
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(1.8rem, 5vw, 2.7rem);
+  line-height: 1.15;
+}
+
+.lead {
+  margin-top: 1rem;
+  color: #c5d0db;
+  max-width: 70ch;
+}
+
+.hero-actions {
+  margin-top: 1.2rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.btn {
+  display: inline-block;
+  text-decoration: none;
+  padding: 0.64rem 0.95rem;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.btn-primary {
+  border-color: #1f7f54;
+  background: linear-gradient(180deg, #0ea968, #05874f);
+}
+
+.btn-ghost {
+  background: var(--panel);
+}
+
+main {
+  padding: 1.2rem 0 2.5rem;
+}
+
+.card {
+  background: linear-gradient(180deg, var(--panel), var(--panel-2));
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 1rem 1.1rem;
+  margin-bottom: 0.9rem;
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.9rem;
+}
+
+h2 {
+  margin: 0 0 0.55rem;
+  font-size: 1.08rem;
+  color: #f0f7ff;
+}
+
+p, ul, ol {
+  margin: 0.4rem 0;
+}
+
+ul, ol {
+  padding-left: 1.2rem;
+}
+
+li {
+  margin: 0.24rem 0;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  background: #0e151d;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.09rem 0.35rem;
+}
+
+.media-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.7rem;
+  margin-top: 0.65rem;
+}
+
+.media-slot {
+  margin: 0;
+}
+
+.media-slot img {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #0e151d;
+}
+
+.lightbox-thumb {
+  cursor: zoom-in;
+  transition: transform 120ms ease, border-color 120ms ease;
+}
+
+.lightbox-thumb:hover {
+  transform: translateY(-1px);
+  border-color: #3a4b61;
+}
+
+.media-slot figcaption {
+  margin-top: 0.3rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.video-shell {
+  margin-top: 0.85rem;
+  max-width: 620px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.video-shell video {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: #000;
+}
+
+.table-like {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.table-like > div {
+  display: grid;
+  grid-template-columns: 165px 1fr;
+  gap: 0.5rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.42rem;
+}
+
+.table-like > div:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.table-like span {
+  color: #c9d3dd;
+}
+
+.footer {
+  border-top: 1px solid var(--border);
+  padding: 1rem 0 2rem;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.lightbox {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  background: rgba(4, 8, 12, 0.84);
+  z-index: 1000;
+  padding: 1rem;
+}
+
+.lightbox.open {
+  display: flex;
+}
+
+.lightbox-figure {
+  margin: 0;
+  max-width: min(92vw, 1400px);
+  max-height: 92vh;
+}
+
+.lightbox-figure img {
+  display: block;
+  max-width: min(92vw, 1400px);
+  max-height: 84vh;
+  width: auto;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #000;
+}
+
+.lightbox-figure figcaption {
+  margin-top: 0.4rem;
+  color: #d2dee8;
+  text-align: center;
+}
+
+.lightbox-close,
+.lightbox-nav {
+  border: 1px solid var(--border);
+  background: #111923;
+  color: var(--text);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.lightbox-close {
+  position: absolute;
+  top: 0.9rem;
+  right: 0.9rem;
+  width: 40px;
+  height: 40px;
+  font-size: 1.4rem;
+  line-height: 1;
+}
+
+.lightbox-nav {
+  width: 42px;
+  height: 56px;
+  font-size: 1.3rem;
+}
+
+@media (max-width: 900px) {
+  .grid-2,
+  .media-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .table-like > div {
+    grid-template-columns: 1fr;
+  }
+}

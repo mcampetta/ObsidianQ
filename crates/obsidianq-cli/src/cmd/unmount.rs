@@ -13,7 +13,11 @@ pub struct UnmountArgs {
 }
 
 pub fn run(args: UnmountArgs) -> Result<()> {
-    let dl = args.drive.trim_end_matches(':').chars().next()
+    let dl = args
+        .drive
+        .trim_end_matches(':')
+        .chars()
+        .next()
         .context("--drive must be a letter such as Z or Z:")?
         .to_ascii_uppercase();
     if !('A'..='Z').contains(&dl) {

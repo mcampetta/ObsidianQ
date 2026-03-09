@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ObsidianQ | Secure File Encryption</title>
+  <meta name="description" content="ObsidianQ is a local-first encryption toolkit with secure contacts, vault workflows, and post-quantum-ready key exchange.">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="hero">
+    <div class="wrap">
+      <p class="eyebrow">ObsidianQ</p>
+      <h1>Secure File Encryption for the Modern Era</h1>
+      <p class="lead">
+        ObsidianQ is a local-first encryption toolkit that combines password workflows, Secure Contacts key exchange,
+        and encrypted vault operations in one practical desktop application.
+      </p>
+      <div class="hero-actions">
+        <a class="btn btn-primary" href="https://github.com/your-org/your-repo">View on GitHub</a>
+        <a class="btn btn-ghost" href="#quick-start">Quick Start</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="grid-2">
+      <article class="card">
+        <h2>What It Solves</h2>
+        <p>
+          ObsidianQ helps you protect files and text without relying on external cloud key services.
+          It supports both simple password encryption and trusted key-based exchange for teams.
+        </p>
+      </article>
+      <article class="card">
+        <h2>Local-First by Design</h2>
+        <ul>
+          <li>Encryption and decryption run on your machine</li>
+          <li>Private keys remain under your control</li>
+          <li>Public identities are exchanged directly between users</li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="card" id="media">
+      <h2>Product Preview</h2>
+      <p class="muted">Latest screenshots and demo clip from the current build.</p>
+      <div class="media-grid">
+        <figure class="media-slot">
+          <img class="lightbox-thumb" src="assets/filetab.png" alt="ObsidianQ File tab screenshot" data-full="assets/filetab.png" data-caption="File tab workflow">
+          <figcaption>File tab workflow</figcaption>
+        </figure>
+        <figure class="media-slot">
+          <img class="lightbox-thumb" src="assets/securecontacts.png" alt="ObsidianQ Secure Contacts screenshot" data-full="assets/securecontacts.png" data-caption="Secure Contacts">
+          <figcaption>Secure Contacts</figcaption>
+        </figure>
+        <figure class="media-slot">
+          <img class="lightbox-thumb" src="assets/vault.png" alt="ObsidianQ Vault screenshot" data-full="assets/vault.png" data-caption="Vault operations">
+          <figcaption>Vault operations</figcaption>
+        </figure>
+      </div>
+      <div class="video-shell">
+        <video controls preload="metadata" poster="assets/filetab.png">
+          <source src="assets/demo.mp4" type="video/mp4">
+          Your browser does not support the video tag.
+        </video>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Security Architecture</h2>
+      <ul>
+        <li><strong>Post-Quantum Key Exchange:</strong> ML-KEM-768 (Kyber)</li>
+        <li><strong>Authenticated Encryption:</strong> XChaCha20-Poly1305</li>
+        <li><strong>Password Hardening:</strong> Argon2id</li>
+        <li><strong>Hashing & Fingerprints:</strong> BLAKE3</li>
+        <li><strong>Chunked Engine:</strong> integrity-oriented large-file processing</li>
+      </ul>
+      <p class="muted">
+        ObsidianQ is designed for practical security and transparent workflows. Security claims should always be validated
+        against current release notes and code.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>Performance Snapshot</h2>
+      <ul>
+        <li>Typical encryption on modern hardware: approximately 1.2-1.4 GB/s</li>
+        <li>Decryption performance varies by storage, workflow, and mount mode</li>
+        <li>Real-world throughput depends on hardware, file size, and I/O profile</li>
+      </ul>
+    </section>
+
+    <section class="card" id="quick-start">
+      <h2>Quick Start</h2>
+      <ol>
+        <li>Set up your identity in <strong>Secure Contacts</strong>.</li>
+        <li>Add trusted contacts or use password-based protection.</li>
+        <li>Encrypt files, protect text, inspect packages, or work in a secure vault.</li>
+      </ol>
+    </section>
+
+    <section class="card">
+      <h2>Tabs Overview</h2>
+      <div class="table-like">
+        <div><strong>File</strong><span>Encrypt and decrypt files using a password or trusted contact keys.</span></div>
+        <div><strong>Text</strong><span>Protect short text, clipboard content, or pasted ciphertext.</span></div>
+        <div><strong>Vault</strong><span>Create and mount encrypted vaults for protected file workflows.</span></div>
+        <div><strong>Inspect</strong><span>Review encrypted packages and metadata without decrypting content.</span></div>
+        <div><strong>Secure Contacts</strong><span>Manage your identity and trusted contacts for key-based exchange.</span></div>
+        <div><strong>Settings</strong><span>Configure behavior, integration options, and key management actions.</span></div>
+        <div><strong>About</strong><span>Read security model guidance and project details.</span></div>
+      </div>
+    </section>
+
+    <section class="grid-2">
+      <article class="card">
+        <h2>Best Practices</h2>
+        <ul>
+          <li>Verify fingerprints before trusting a contact</li>
+          <li>Back up private keys securely</li>
+          <li>Use strong passwords in password mode</li>
+          <li>Store recovery material safely</li>
+          <li>Keep ObsidianQ updated</li>
+        </ul>
+      </article>
+      <article class="card">
+        <h2>Version</h2>
+        <p><strong>ObsidianQ Version:</strong> 1.0</p>
+        <p>Built for secure, high-performance encryption and post-quantum readiness.</p>
+        <p class="muted">Local-first security | Modern cryptography | Trusted file exchange</p>
+      </article>
+    </section>
+  </main>
+
+  <div id="lightbox" class="lightbox" aria-hidden="true">
+    <button class="lightbox-close" type="button" aria-label="Close preview">&times;</button>
+    <button class="lightbox-nav lightbox-prev" type="button" aria-label="Previous image">&#10094;</button>
+    <figure class="lightbox-figure">
+      <img id="lightbox-image" src="" alt="">
+      <figcaption id="lightbox-caption"></figcaption>
+    </figure>
+    <button class="lightbox-nav lightbox-next" type="button" aria-label="Next image">&#10095;</button>
+  </div>
+
+  <footer class="footer wrap">
+    <p>ObsidianQ</p>
+  </footer>
+  <script src="site.js"></script>
+</body>
+</html>

@@ -25,7 +25,7 @@
 //! │  Global MAC   32 bytes BLAKE3 MAC over all chunk tags           │
 //! └─────────────────────────────────────────────────────────────────┘
 
-use byteorder::{LE, ReadBytesExt, WriteBytesExt};
+use byteorder::{ReadBytesExt, WriteBytesExt, LE};
 use std::io::{Read, Write};
 
 use crate::error::{ObsidianError, Result};
@@ -40,7 +40,7 @@ pub const VERSION: u8 = 0x02;
 #[repr(u8)]
 pub enum SuiteId {
     XChaCha20Poly1305 = 0x00,
-    Aes256Gcm         = 0x01,
+    Aes256Gcm = 0x01,
 }
 
 impl TryFrom<u8> for SuiteId {
@@ -59,7 +59,7 @@ impl TryFrom<u8> for SuiteId {
 #[repr(u8)]
 pub enum Mode {
     Password = 0x00,
-    Pqc      = 0x01,
+    Pqc = 0x01,
 }
 
 impl TryFrom<u8> for Mode {
@@ -83,18 +83,18 @@ pub mod flags {
 ///  - PQC mode      : ML-KEM-768 ciphertext (1088 bytes) ++ 32-byte HKDF salt
 #[derive(Debug, Clone)]
 pub struct FileHeader {
-    pub version:    u8,
-    pub mode:       Mode,
-    pub suite:      SuiteId,
-    pub flags:      u8,
+    pub version: u8,
+    pub mode: Mode,
+    pub suite: SuiteId,
+    pub flags: u8,
     /// Chunk size in bytes (must be a power of two, ≥ 4096).
     pub chunk_size: u32,
     /// Random 16-byte file ID used in nonce derivation.
-    pub file_id:    [u8; 16],
+    pub file_id: [u8; 16],
     /// Variable-length KEM data (salt or KEM ciphertext).
-    pub kem_data:   Vec<u8>,
+    pub kem_data: Vec<u8>,
     /// BLAKE3 keyed MAC over everything above this field.
-    pub mac:        [u8; 32],
+    pub mac: [u8; 32],
 }
 
 impl FileHeader {
@@ -132,7 +132,8 @@ impl FileHeader {
     /// that is done by the caller once the master key is known.
     pub fn read_from<R: Read>(r: &mut R) -> Result<Self> {
         let mut magic = [0u8; 4];
-        r.read_exact(&mut magic).map_err(|_| ObsidianError::TruncatedHeader { needed: 4, got: 0 })?;
+        r.read_exact(&mut magic)
+            .map_err(|_| ObsidianError::TruncatedHeader { needed: 4, got: 0 })?;
         if &magic != MAGIC {
             return Err(ObsidianError::InvalidMagic);
         }
@@ -142,7 +143,7 @@ impl FileHeader {
             return Err(ObsidianError::UnsupportedVersion(version));
         }
 
-        let mode  = Mode::try_from(r.read_u8()?)?;
+        let mode = Mode::try_from(r.read_u8()?)?;
         let suite = SuiteId::try_from(r.read_u8()?)?;
         let flags = r.read_u8()?;
         let chunk_size = r.read_u32::<LE>()?;
@@ -157,13 +158,22 @@ impl FileHeader {
         let mut mac = [0u8; 32];
         r.read_exact(&mut mac)?;
 
-        Ok(FileHeader { version, mode, suite, flags, chunk_size, file_id, kem_data, mac })
+        Ok(FileHeader {
+            version,
+            mode,
+            suite,
+            flags,
+            chunk_size,
+            file_id,
+            kem_data,
+            mac,
+        })
     }
 }
 
 /// A single encrypted chunk record (body section).
 pub struct ChunkRecord {
-    pub index:      u64,
+    pub index: u64,
     pub ciphertext: Vec<u8>, // already includes the 16-byte AEAD tag
 }
 
@@ -178,7 +188,7 @@ impl ChunkRecord {
     pub fn read_from<R: Read>(r: &mut R) -> Result<Option<Self>> {
         // Read index — EOF here is normal (end of body).
         let index = match r.read_u64::<LE>() {
-            Ok(v)  => v,
+            Ok(v) => v,
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
             Err(e) => return Err(e.into()),
         };
@@ -193,7 +203,7 @@ impl ChunkRecord {
 pub struct FileFooter {
     pub chunk_count: u64,
     /// BLAKE3 keyed MAC over the concatenation of all chunk tags (last 16B of each ct).
-    pub global_mac:  [u8; 32],
+    pub global_mac: [u8; 32],
 }
 
 impl FileFooter {
@@ -207,6 +217,9 @@ impl FileFooter {
         let chunk_count = r.read_u64::<LE>()?;
         let mut global_mac = [0u8; 32];
         r.read_exact(&mut global_mac)?;
-        Ok(FileFooter { chunk_count, global_mac })
+        Ok(FileFooter {
+            chunk_count,
+            global_mac,
+        })
     }
 }

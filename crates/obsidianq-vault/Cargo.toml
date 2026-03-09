@@ -1,0 +1,15 @@
+[package]
+name    = "obsidianq-vault"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+obsidianq-core.workspace = true
+byteorder.workspace      = true
+thiserror.workspace      = true
+zeroize.workspace        = true
+rand.workspace           = true
+blake3.workspace         = true
+
+[dev-dependencies]
+tempfile = "3"
