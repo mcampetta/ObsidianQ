@@ -12,9 +12,14 @@
   box-sizing: border-box;
 }
 
+html {
+  background-color: #0b1015;
+}
+
 body {
   margin: 0;
   font-family: "Segoe UI", "Inter", system-ui, -apple-system, sans-serif;
+  background-color: #0b1015;
   background: radial-gradient(1200px 800px at 15% -15%, #16212d 0%, var(--bg) 55%);
   color: var(--text);
   line-height: 1.5;
