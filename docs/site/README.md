@@ -10,13 +10,18 @@ This folder contains a publish-ready static page for showcasing ObsidianQ.
 
 ## Add Your Media
 
-Place media files in `docs/site/assets` using these names (or update `index.html`):
+Current template media references in `docs/site/index.html`:
 
-- `screenshot-file-tab.png`
-- `screenshot-secure-contacts.png`
-- `screenshot-vault.png`
-- `video-poster.png`
-- `demo.mp4`
+- `filetab.png`
+- `securecontacts.png`
+- `vault.png`
+- `add-contact.png`
+- `texttab-ciphertext.png`
+- `settings.png`
+- `shell-newvault.png`
+- `shell-encryptfile.png`
+- `fileassociations.png`
+- `teaser.mp4`
 
 ## Publish on GitHub Pages
 

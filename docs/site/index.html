@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ObsidianQ | Secure File Encryption</title>
-  <meta name="description" content="ObsidianQ is a local-first encryption toolkit with secure contacts, vault workflows, and post-quantum-ready key exchange.">
+  <title>ObsidianQ | Local-First Encryption and Secure Delivery</title>
+  <meta name="description" content="ObsidianQ is a local-first encryption toolkit for files, text, vaults, inspect workflows, and self-extracting secure delivery packages.">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -23,8 +23,8 @@
       <p class="eyebrow">ObsidianQ</p>
       <h1>Secure File Encryption for the Modern Era</h1>
       <p class="lead">
-        ObsidianQ is a local-first encryption toolkit that combines password workflows, recipient key exchange through
-        Secure Contacts, and encrypted vault operations in one practical desktop application.
+        ObsidianQ combines password workflows, trusted-contact encryption, encrypted vaults, package inspection, and
+        self-extracting secure delivery in one practical desktop application.
       </p>
       <div class="hero-actions">
         <a class="btn btn-primary" href="https://github.com/mcampetta/ObsidianQ">View on GitHub</a>
@@ -38,7 +38,7 @@
       <article class="card">
         <h2>What It Solves</h2>
         <p>
-          ObsidianQ helps you protect files and text without relying on external cloud key services.
+          ObsidianQ helps you protect files, text, and portable delivery packages without relying on external cloud key services.
           It supports both simple password encryption and trusted key-based exchange for teams.
         </p>
       </article>
@@ -57,6 +57,15 @@
       <ul>
         <li>Uses recipient key exchange so only trusted contacts can open shared encrypted data.</li>
         <li>No password handoff is required in Secure Contacts mode.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Portable Secure Delivery</h2>
+      <ul>
+        <li>Create self-extracting packages directly from the launcher.</li>
+        <li>Choose a portable ZIP archive or a single EXE package for recipients who do not have ObsidianQ installed.</li>
+        <li>Inspect Secure Delivery ZIP and EXE packages before extraction to verify metadata and payload integrity.</li>
       </ul>
     </section>
 
@@ -93,7 +102,7 @@
 
     <section class="card" id="shell-integration">
       <h2>Shell Integration</h2>
-      <p class="muted">Right-click shortcuts for fast encryption workflows from Windows Explorer.</p>
+      <p class="muted">Right-click shortcuts for fast encryption and package creation workflows from Windows Explorer.</p>
       <div class="media-grid">
         <figure class="media-slot">
           <img class="lightbox-thumb" src="assets/shell-newvault.png" alt="Windows Explorer New menu showing Obsidian Vault option" data-full="assets/shell-newvault.png" data-caption="Right click empty folder space - New > Obsidian Vault">
@@ -101,7 +110,7 @@
         </figure>
         <figure class="media-slot">
           <img class="lightbox-thumb" src="assets/shell-encryptfile.png" alt="Windows Explorer context menu showing ObsidianQ Encrypt Decrypt options" data-full="assets/shell-encryptfile.png" data-caption="Right click file - ObsidianQ Encrypt/Decrypt">
-          <figcaption>ObsidianQ Encrypt/Decrypt</figcaption>
+          <figcaption>Encrypt, decrypt, and create packages from Explorer</figcaption>
         </figure>
         <figure class="media-slot">
           <img class="lightbox-thumb" src="assets/fileassociations.png" alt="ObsidianQ associated file types in Windows Explorer" data-full="assets/fileassociations.png" data-caption="Native file associations: .vault, .obsq, and .obsqpub files open directly in ObsidianQ Launcher">
@@ -139,8 +148,8 @@
       <ol>
         <li>Set up your identity in <strong>Secure Contacts</strong>.</li>
         <li>Add trusted contacts or use password-based protection.</li>
-        <li>Encrypt files, protect text, inspect packages, or work in a secure vault.</li>
-        <li>Share encrypted files with your Secure Contacts for seamless access without password handoff, or use password mode when sharing by password.</li>
+        <li>Encrypt files, protect text, inspect containers, create secure delivery packages, or work in a secure vault.</li>
+        <li>Share encrypted files with Secure Contacts for seamless access without password handoff, or use portable password-protected packages when you need recipient-friendly delivery.</li>
       </ol>
     </section>
 
@@ -150,7 +159,8 @@
         <div><strong>File</strong><span>Encrypt and decrypt files using a password or recipient key exchange with trusted contacts.</span></div>
         <div><strong>Text</strong><span>Protect short text, clipboard content, or pasted ciphertext using password mode or Secure Contacts key exchange.</span></div>
         <div><strong>Vault</strong><span>Create and mount encrypted vaults with password protection or Secure Contacts key-based access control.</span></div>
-        <div><strong>Inspect</strong><span>Review encrypted packages and metadata without decrypting content.</span></div>
+        <div><strong>Inspect</strong><span>Review `.obsq`, vault, ZIP package, and Single EXE package metadata without decrypting content.</span></div>
+        <div><strong>Self-Extracting Package</strong><span>Create portable ZIP or Single EXE secure-delivery packages for recipients without ObsidianQ.</span></div>
         <div><strong>Secure Contacts</strong><span>Manage your identity and trusted contacts for key-based exchange.</span></div>
         <div><strong>Settings</strong><span>Configure behavior, integration options, and key management actions.</span></div>
         <div><strong>About</strong><span>Read security model guidance and project details.</span></div>

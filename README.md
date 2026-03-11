@@ -2,19 +2,20 @@
 
 # ObsidianQ
 
-Local-first, high-performance encryption for files, text, and vault workflows.
+Local-first, high-performance encryption for files, text, vaults, inspection, and secure delivery workflows.
 
 ObsidianQ combines practical desktop UX with modern cryptography, including password-based protection and Secure Contacts key-based exchange for trusted sharing.
 
 ## Highlights
 
 - File encryption/decryption with password or Secure Contacts key-based mode
+- Self-Extracting Package workflows with portable ZIP and Single EXE outputs
 - Secure Contacts identity and trusted contact management
 - Public Identity import/export (`.obsqpub`) with metadata
 - Encrypted Vault workflows (create, load, add/extract/remove, rekey)
-- Container metadata inspection without decrypting content
+- Container metadata inspection for `.obsq`, vault, ZIP package, and Single EXE package formats
 - Streaming progress for major file/vault transfer operations
-- Windows shell integration and file associations
+- Windows shell integration, package creation shortcuts, and file associations
 
 ## Security Model (At a Glance)
 
@@ -51,6 +52,8 @@ Core crypto building blocks used by the project include:
    - `File` for file encryption/decryption
    - `Text` for short text encryption/decryption
    - `Vault` for encrypted vault operations
+   - `Inspect` for metadata and integrity review
+   - `Self-Extracting Package` for portable password-protected delivery
    - `Secure Contacts` for identity/contact-based exchange
 
 Important:
@@ -142,6 +145,7 @@ Compare the resulting hash with the published `.sha256` file.
 - The launcher is single-instance and forwards file-association opens to the running instance.
 - Vault transfer workflows now use streaming progress parsing where available.
 - Secure Contacts is the default key-based mode label across the UI.
+- Explorer shell actions support direct package creation and folder package workflows.
 
 ## Security Disclaimer
 
