@@ -29,6 +29,12 @@
     <PackageReference Include="QRCoder" Version="1.4.3" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="embedded\ObsidianQ.Bootstrapper.exe" LogicalName="ObsidianQ.Launcher.Embedded.ObsidianQ.Bootstrapper.exe" />
+    <EmbeddedResource Include="embedded\ObsidianQ.Extractor.exe" LogicalName="ObsidianQ.Launcher.Embedded.ObsidianQ.Extractor.exe" />
+    <EmbeddedResource Include="embedded\obsidianq.exe" LogicalName="ObsidianQ.Launcher.Embedded.obsidianq.exe" />
+  </ItemGroup>
+
   <!-- Add <ApplicationIcon>obsidianq.ico</ApplicationIcon> and an icon file to use a custom icon -->
 
 </Project>

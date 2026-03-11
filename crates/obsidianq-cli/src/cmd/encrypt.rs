@@ -7,6 +7,7 @@ use std::sync::{
 };
 use std::thread;
 use std::time::Duration;
+use std::process;
 
 use anyhow::{bail, Context, Result};
 use chacha20poly1305::{
@@ -26,6 +27,7 @@ use obsidianq_core::{
     format::{Mode, SuiteId},
 };
 
+use super::json_output::{print_json_error, print_json_success};
 use super::read_pub;
 
 const MULTI_MAGIC_V2: &[u8; 4] = b"MRK2";
@@ -71,9 +73,49 @@ pub struct EncryptArgs {
     /// Chunk size in bytes (default 1 MiB)
     #[arg(long, default_value_t = DEFAULT_CHUNK_SIZE)]
     pub chunk_size: u32,
+
+    /// Emit machine-readable JSON response
+    #[arg(long)]
+    pub json: bool,
 }
 
 pub fn run(args: EncryptArgs) -> Result<()> {
+    let json = args.json;
+    if json && args.text {
+        print_json_error(
+            "encrypt",
+            "UNSUPPORTED_FORMAT",
+            "--json is not supported with --text mode",
+            Some("text"),
+        )?;
+        process::exit(2);
+    }
+    match run_impl(args) {
+        Ok(()) => {
+            if json {
+                print_json_success("encrypt", serde_json::json!({ "status": "ok" }))?;
+            }
+            Ok(())
+        }
+        Err(e) => {
+            if json {
+                let msg = e.to_string();
+                let code = if msg.contains("password") {
+                    "PASSWORD_MISSING"
+                } else if msg.contains("not found") {
+                    "INPUT_NOT_FOUND"
+                } else {
+                    "INTERNAL"
+                };
+                print_json_error("encrypt", code, &msg, None)?;
+                process::exit(if code == "INTERNAL" { 1 } else { 2 });
+            }
+            Err(e)
+        }
+    }
+}
+
+fn run_impl(args: EncryptArgs) -> Result<()> {
     if !args.password && !args.password_stdin && args.pubkey.is_empty() {
         bail!("provide one of --password, --password-stdin, or --pubkey <path>");
     }

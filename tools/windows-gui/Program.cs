@@ -6,8 +6,11 @@
 using System.Diagnostics;
 using System.IO.Compression;
 using System.IO.Pipes;
+using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Win32;
 
@@ -22,8 +25,18 @@ static class Program
 {
     private const string SingleInstanceMutexName = @"Local\ObsidianQ.Launcher.SingleInstance";
     private static readonly string SingleInstancePipeName = $"ObsidianQ.Launcher.Pipe.{Environment.UserName}";
+    private const string EmbeddedSfxMagic = "OBSQSFX1";
+    private const int EmbeddedSfxTrailerSize = 24; // zipLen(8) + cliLen(8) + magic(8)
 
-    private sealed record LaunchIntent(bool CreateVaultOnStart, string? PreloadPath, string? CreateVaultTarget);
+    private sealed record LaunchIntent(
+        bool CreateVaultOnStart,
+        string? PreloadPath,
+        string? CreateVaultTarget,
+        bool CreatePackageOnStart,
+        string? CreatePackageTarget,
+        bool EncryptFolderOnStart,
+        string? EncryptFolderTarget);
+    private sealed record EmbeddedSfxInfo(long PackageOffset, long PackageLength, long CliOffset, long CliLength);
 
     private static void LogStartup(string[] args)
     {
@@ -44,6 +57,17 @@ static class Program
     static void Main(string[] args)
     {
         LogStartup(args);
+
+        string hostExePath = Environment.ProcessPath ?? Application.ExecutablePath;
+        if (TryGetEmbeddedSfxInfo(hostExePath, out var sfxInfo))
+        {
+            Application.SetHighDpiMode(HighDpiMode.SystemAware);
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+            RunEmbeddedSfxExtractor(hostExePath, sfxInfo);
+            return;
+        }
+
         using var singleInstanceMutex = new Mutex(true, SingleInstanceMutexName, out bool isFirstInstance);
         if (!isFirstInstance)
         {
@@ -57,26 +81,307 @@ static class Program
 
         var launch = ParseLaunchIntent(args);
         using var cts = new CancellationTokenSource();
-        var form = new MainForm(launch.PreloadPath, launch.CreateVaultOnStart, launch.CreateVaultTarget);
+        var form = new MainForm(
+            launch.PreloadPath,
+            launch.CreateVaultOnStart,
+            launch.CreateVaultTarget,
+            launch.CreatePackageOnStart,
+            launch.CreatePackageTarget,
+            launch.EncryptFolderOnStart,
+            launch.EncryptFolderTarget);
         _ = RunSingleInstanceServerAsync(form, cts.Token);
         Application.ApplicationExit += (_, _) => cts.Cancel();
         Application.Run(form);
     }
 
+    private static bool TryGetEmbeddedSfxInfo(string hostExePath, out EmbeddedSfxInfo info)
+    {
+        info = new EmbeddedSfxInfo(0, 0, 0, 0);
+        try
+        {
+            using var fs = new FileStream(hostExePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            if (fs.Length <= EmbeddedSfxTrailerSize) return false;
+            fs.Seek(-EmbeddedSfxTrailerSize, SeekOrigin.End);
+            byte[] trailer = new byte[EmbeddedSfxTrailerSize];
+            int read = fs.Read(trailer, 0, trailer.Length);
+            if (read != trailer.Length) return false;
+
+            string magic = Encoding.ASCII.GetString(trailer, 16, 8);
+            if (!string.Equals(magic, EmbeddedSfxMagic, StringComparison.Ordinal)) return false;
+
+            long packageLen = BitConverter.ToInt64(trailer, 0);
+            long cliLen = BitConverter.ToInt64(trailer, 8);
+            if (packageLen <= 0 || cliLen <= 0) return false;
+
+            long payloadStart = fs.Length - EmbeddedSfxTrailerSize - packageLen - cliLen;
+            if (payloadStart < 0) return false;
+            long cliOffset = payloadStart + packageLen;
+            if (cliOffset < 0 || cliOffset + cliLen > fs.Length) return false;
+
+            info = new EmbeddedSfxInfo(payloadStart, packageLen, cliOffset, cliLen);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static void CopyRangeToFile(string sourcePath, long offset, long length, string destinationPath)
+    {
+        using var src = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using var dst = new FileStream(destinationPath, FileMode.Create, FileAccess.Write, FileShare.None);
+        src.Seek(offset, SeekOrigin.Begin);
+        byte[] buffer = new byte[128 * 1024];
+        long remaining = length;
+        while (remaining > 0)
+        {
+            int want = (int)Math.Min(buffer.Length, remaining);
+            int n = src.Read(buffer, 0, want);
+            if (n <= 0) throw new EndOfStreamException("Unexpected end of embedded payload.");
+            dst.Write(buffer, 0, n);
+            remaining -= n;
+        }
+    }
+
+    private static string? PromptForPassword()
+    {
+        using var dlg = new Form
+        {
+            Text = "Decrypt Package",
+            StartPosition = FormStartPosition.CenterScreen,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox = false,
+            MinimizeBox = false,
+            ShowInTaskbar = true,
+            ClientSize = new Size(460, 130),
+            BackColor = Theme.Bg,
+            ForeColor = Theme.TextMain,
+            Font = Theme.SafeMono(9f),
+        };
+        var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4, Padding = new Padding(12), BackColor = Theme.Bg };
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 20));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+        var lbl = new Label
+        {
+            Text = "Enter password to decrypt package:",
+            Dock = DockStyle.Fill,
+            ForeColor = Theme.TextMain,
+            BackColor = Theme.Bg,
+            TextAlign = ContentAlignment.MiddleLeft,
+        };
+        var txt = new TextBox
+        {
+            Dock = DockStyle.Fill,
+            UseSystemPasswordChar = true,
+            BackColor = Theme.Surface,
+            ForeColor = Theme.Accent,
+            BorderStyle = BorderStyle.FixedSingle,
+        };
+        var actions = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = Theme.Bg };
+        actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        var btnCancel = new NeonButton { Text = "CANCEL", Dock = DockStyle.Fill, Margin = new Padding(0, 0, 4, 0) };
+        var btnOk = new NeonButton { Text = "DECRYPT", Dock = DockStyle.Fill, Margin = new Padding(4, 0, 0, 0) };
+        btnCancel.Click += (_, _) => { dlg.DialogResult = DialogResult.Cancel; dlg.Close(); };
+        btnOk.Click += (_, _) =>
+        {
+            if (string.IsNullOrWhiteSpace(txt.Text))
+            {
+                MessageBox.Show(dlg, "Password is required.", "Decrypt Package", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            dlg.DialogResult = DialogResult.OK;
+            dlg.Close();
+        };
+        actions.Controls.Add(btnCancel, 0, 0);
+        actions.Controls.Add(btnOk, 1, 0);
+        root.Controls.Add(lbl, 0, 0);
+        root.Controls.Add(txt, 0, 1);
+        root.Controls.Add(new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg }, 0, 2);
+        root.Controls.Add(actions, 0, 3);
+        dlg.Controls.Add(root);
+        return dlg.ShowDialog() == DialogResult.OK ? txt.Text : null;
+    }
+
+    private static void RunEmbeddedSfxExtractor(string hostExePath, EmbeddedSfxInfo sfx)
+    {
+        string? password = PromptForPassword();
+        if (password == null) return;
+        string tempRoot = Path.Combine(Path.GetTempPath(), $"obsq_sfx_run_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempRoot);
+        string pkgPath = Path.Combine(tempRoot, "package.zip");
+        string cliPath = Path.Combine(tempRoot, "obsidianq.exe");
+        string probeOutDir = Path.Combine(tempRoot, "probe_out");
+
+        try
+        {
+            CopyRangeToFile(hostExePath, sfx.PackageOffset, sfx.PackageLength, pkgPath);
+            CopyRangeToFile(hostExePath, sfx.CliOffset, sfx.CliLength, cliPath);
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = cliPath,
+                Arguments = $"delivery extract \"{pkgPath}\" --out \"{probeOutDir}\" --password-stdin",
+                UseShellExecute = false,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+            };
+            using var proc = Process.Start(psi);
+            if (proc == null) throw new InvalidOperationException("Failed to start embedded extractor.");
+
+            proc.StandardInput.WriteLine(password);
+            proc.StandardInput.Close();
+            string stdout = proc.StandardOutput.ReadToEnd();
+            string stderr = proc.StandardError.ReadToEnd();
+            proc.WaitForExit();
+
+            if (proc.ExitCode != 0)
+            {
+                string detail = (string.IsNullOrWhiteSpace(stderr) ? stdout : stderr).Trim();
+                bool likelyBadPassword =
+                    detail.Contains("PayloadCorrupt", StringComparison.OrdinalIgnoreCase) ||
+                    detail.Contains("decrypt payload", StringComparison.OrdinalIgnoreCase) ||
+                    detail.Contains("password", StringComparison.OrdinalIgnoreCase);
+                string message = likelyBadPassword
+                    ? "Incorrect password or corrupted package."
+                    : (string.IsNullOrWhiteSpace(detail) ? $"Extractor failed (exit {proc.ExitCode})." : detail);
+                MessageBox.Show(message, "ObsidianQ", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            string baseDir = Path.GetDirectoryName(hostExePath) ?? Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+            string stem = Path.GetFileNameWithoutExtension(hostExePath);
+            string defaultOutDir = Path.Combine(baseDir, $"{stem}_Extracted");
+
+            var pick = MessageBox.Show(
+                "Password Verified.\n\nDecrypt file/files to the same folder?",
+                "ObsidianQ",
+                MessageBoxButtons.YesNoCancel,
+                MessageBoxIcon.Question,
+                MessageBoxDefaultButton.Button1);
+            if (pick == DialogResult.Cancel) return;
+
+            string outDir = defaultOutDir;
+            if (pick == DialogResult.No)
+            {
+                using var folder = new FolderBrowserDialog
+                {
+                    Description = "Choose where to extract files",
+                    UseDescriptionForTitle = true,
+                    ShowNewFolderButton = true,
+                    SelectedPath = baseDir,
+                };
+                if (folder.ShowDialog() != DialogResult.OK || string.IsNullOrWhiteSpace(folder.SelectedPath))
+                    return;
+                outDir = folder.SelectedPath;
+            }
+
+            Directory.CreateDirectory(outDir);
+            MoveExtractedContentsSafe(probeOutDir, outDir);
+            MessageBox.Show("Decryption complete.", "ObsidianQ", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            try { Process.Start(new ProcessStartInfo("explorer.exe", $"\"{outDir}\"") { UseShellExecute = true }); } catch { }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "ObsidianQ", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            try { Directory.Delete(tempRoot, recursive: true); } catch { }
+        }
+    }
+
+    private static void MoveExtractedContentsSafe(string sourceRoot, string targetRoot)
+    {
+        if (!Directory.Exists(sourceRoot))
+            throw new DirectoryNotFoundException($"Extracted source folder not found: {sourceRoot}");
+        Directory.CreateDirectory(targetRoot);
+
+        foreach (string dir in Directory.GetDirectories(sourceRoot))
+        {
+            string name = Path.GetFileName(dir);
+            string desired = Path.Combine(targetRoot, name);
+            string final = GetUniquePath(desired, isDirectory: true);
+            DirectoryCopyRecursive(dir, final);
+        }
+        foreach (string file in Directory.GetFiles(sourceRoot))
+        {
+            string name = Path.GetFileName(file);
+            string desired = Path.Combine(targetRoot, name);
+            string final = GetUniquePath(desired, isDirectory: false);
+            File.Copy(file, final, overwrite: false);
+        }
+    }
+
+    private static void DirectoryCopyRecursive(string sourceDir, string targetDir)
+    {
+        Directory.CreateDirectory(targetDir);
+        foreach (string file in Directory.GetFiles(sourceDir))
+        {
+            string name = Path.GetFileName(file);
+            string desired = Path.Combine(targetDir, name);
+            string final = GetUniquePath(desired, isDirectory: false);
+            File.Copy(file, final, overwrite: false);
+        }
+        foreach (string dir in Directory.GetDirectories(sourceDir))
+        {
+            string name = Path.GetFileName(dir);
+            string desired = Path.Combine(targetDir, name);
+            string final = GetUniquePath(desired, isDirectory: true);
+            DirectoryCopyRecursive(dir, final);
+        }
+    }
+
+    private static string GetUniquePath(string desiredPath, bool isDirectory)
+    {
+        if (isDirectory ? !Directory.Exists(desiredPath) : !File.Exists(desiredPath))
+            return desiredPath;
+        string parent = Path.GetDirectoryName(desiredPath) ?? Environment.CurrentDirectory;
+        string name = Path.GetFileNameWithoutExtension(desiredPath);
+        string ext = Path.GetExtension(desiredPath);
+        for (int i = 1; i < 10_000; i++)
+        {
+            string candidateName = isDirectory ? $"{name} ({i})" : $"{name} ({i}){ext}";
+            string candidate = Path.Combine(parent, candidateName);
+            if (isDirectory ? !Directory.Exists(candidate) : !File.Exists(candidate))
+                return candidate;
+        }
+        throw new IOException("Unable to resolve non-conflicting output path.");
+    }
+
     private static LaunchIntent ParseLaunchIntent(string[] args)
     {
         bool createVaultOnStart = args.Any(a => string.Equals(a, "--create-vault", StringComparison.OrdinalIgnoreCase));
+        bool createPackageOnStart = args.Any(a => string.Equals(a, "--create-package", StringComparison.OrdinalIgnoreCase));
+        bool encryptFolderOnStart = args.Any(a => string.Equals(a, "--encrypt-folder", StringComparison.OrdinalIgnoreCase));
         string? positionalPath = args.FirstOrDefault(a => !a.StartsWith("-"));
-        string? preloadPath = positionalPath != null && File.Exists(positionalPath) ? positionalPath : null;
+        bool positionalExists = positionalPath != null && (File.Exists(positionalPath) || Directory.Exists(positionalPath));
+        string? preloadPath = (!createVaultOnStart && !createPackageOnStart && !encryptFolderOnStart && positionalPath != null && File.Exists(positionalPath))
+            ? positionalPath
+            : null;
         string? createVaultTarget = createVaultOnStart ? positionalPath : null;
-        return new LaunchIntent(createVaultOnStart, preloadPath, createVaultTarget);
+        string? createPackageTarget = (createPackageOnStart && positionalExists) ? positionalPath : null;
+        string? encryptFolderTarget = (encryptFolderOnStart && positionalPath != null && Directory.Exists(positionalPath)) ? positionalPath : null;
+        return new LaunchIntent(
+            createVaultOnStart,
+            preloadPath,
+            createVaultTarget,
+            createPackageOnStart,
+            createPackageTarget,
+            encryptFolderOnStart,
+            encryptFolderTarget);
     }
 
     private static bool TrySignalExistingInstance(string[] args)
     {
         var launch = ParseLaunchIntent(args);
         string payload = Convert.ToBase64String(Encoding.UTF8.GetBytes(
-            $"{(launch.CreateVaultOnStart ? "1" : "0")}\t{launch.PreloadPath ?? string.Empty}\t{launch.CreateVaultTarget ?? string.Empty}"));
+            $"{(launch.CreateVaultOnStart ? "1" : "0")}\t{launch.PreloadPath ?? string.Empty}\t{launch.CreateVaultTarget ?? string.Empty}\t{(launch.CreatePackageOnStart ? "1" : "0")}\t{launch.CreatePackageTarget ?? string.Empty}\t{(launch.EncryptFolderOnStart ? "1" : "0")}\t{launch.EncryptFolderTarget ?? string.Empty}"));
         for (int i = 0; i < 5; i++)
         {
             try
@@ -119,8 +424,19 @@ static class Program
                 bool createVaultOnStart = parts.Length > 0 && parts[0] == "1";
                 string? preloadPath = parts.Length > 1 && !string.IsNullOrWhiteSpace(parts[1]) ? parts[1] : null;
                 string? createVaultTarget = parts.Length > 2 && !string.IsNullOrWhiteSpace(parts[2]) ? parts[2] : null;
+                bool createPackageOnStart = parts.Length > 3 && parts[3] == "1";
+                string? createPackageTarget = parts.Length > 4 && !string.IsNullOrWhiteSpace(parts[4]) ? parts[4] : null;
+                bool encryptFolderOnStart = parts.Length > 5 && parts[5] == "1";
+                string? encryptFolderTarget = parts.Length > 6 && !string.IsNullOrWhiteSpace(parts[6]) ? parts[6] : null;
                 form.BeginInvoke(new Action(() =>
-                    form.HandleExternalLaunch(preloadPath, createVaultOnStart, createVaultTarget)));
+                    form.HandleExternalLaunch(
+                        preloadPath,
+                        createVaultOnStart,
+                        createVaultTarget,
+                        createPackageOnStart,
+                        createPackageTarget,
+                        encryptFolderOnStart,
+                        encryptFolderTarget)));
             }
             catch (OperationCanceledException)
             {
@@ -1880,6 +2196,7 @@ class MainForm : Form
     // -----------------------------------------------------------------------
     private readonly ShimmerStrip _shimmer;
     private Action<string?, bool>? _openAddContactDialog;
+    private Action<string>? _openDeliveryWithSource;
     private CancellationTokenSource? _cts;
     private DateTime _fileProgressStartUtc;
     private string _fileProgressStage = "processing";
@@ -1896,6 +2213,7 @@ class MainForm : Form
     private readonly CyberpunkTabControl _tabs;
 
     private static readonly string ExePath = ResolveExePath();
+    private static readonly string ExtractorStubPath = ResolveExtractorStubPath();
     private static readonly string LocalKeysDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "ObsidianQ", "keys");
@@ -1906,11 +2224,18 @@ class MainForm : Form
     // -----------------------------------------------------------------------
     // Constructor
     // -----------------------------------------------------------------------
-    public MainForm(string? preloadPath, bool createVaultOnStart = false, string? createVaultTarget = null)
+    public MainForm(
+        string? preloadPath,
+        bool createVaultOnStart = false,
+        string? createVaultTarget = null,
+        bool createPackageOnStart = false,
+        string? createPackageTarget = null,
+        bool encryptFolderOnStart = false,
+        string? encryptFolderTarget = null)
     {
         Text = "ObsidianQ - Post-Quantum Encryption";
-        Size = new Size(800, 714);
-        MinimumSize = new Size(680, 620);
+        Size = new Size(840, 780);
+        MinimumSize = new Size(680, 680);
         BackColor = Theme.Bg;
         ForeColor = Theme.TextMain;
         FormBorderStyle = FormBorderStyle.Sizable;
@@ -2358,7 +2683,7 @@ class MainForm : Form
             Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 9,
             Padding = new Padding(16), BackColor = Theme.Bg,
         };
-        outerFile.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));  // 0: header
+        outerFile.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));  // 0: header
         outerFile.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));  // 1: toggle
         outerFile.RowStyles.Add(new RowStyle(SizeType.Absolute, 92));  // 2: drop zone
         outerFile.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));  // 3: output path
@@ -2368,11 +2693,9 @@ class MainForm : Form
         outerFile.RowStyles.Add(new RowStyle(SizeType.Percent, 100));  // 7: log
         outerFile.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));  // 8: status bar
 
-        var fileHeader = MakeLabel("[ OBSIDIANQ // POST-QUANTUM FILE ENCRYPTION ]", 11f, bold: true);
-        fileHeader.ForeColor = Theme.Accent;
-        fileHeader.TextAlign = ContentAlignment.MiddleCenter;
-        fileHeader.Dock = DockStyle.Fill;
-        outerFile.Controls.Add(fileHeader, 0, 0);
+        outerFile.Controls.Add(MakeTabHeader(
+            "FILE ENCRYPTION",
+            "Encrypt and decrypt files using password or recipient keys."), 0, 0);
 
         outerFile.Controls.Add(_toggle, 0, 1);
         outerFile.Controls.Add(_dropZone, 0, 2);
@@ -2449,24 +2772,28 @@ class MainForm : Form
         // ==================================================================
         var outerText = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 6,
+            Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 7,
             Padding = new Padding(16), BackColor = Theme.Bg,
         };
-        outerText.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));      // 0: toggle
-        outerText.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));      // 1: mode panel
-        outerText.RowStyles.Add(new RowStyle(SizeType.Percent, 50));       // 2: input
-        outerText.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));      // 3: buttons
-        outerText.RowStyles.Add(new RowStyle(SizeType.Percent, 50));       // 4: output
-        outerText.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));      // 5: status
+        outerText.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));      // 0: header
+        outerText.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));      // 1: toggle
+        outerText.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));      // 2: mode panel
+        outerText.RowStyles.Add(new RowStyle(SizeType.Percent, 50));       // 3: input
+        outerText.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));      // 4: buttons
+        outerText.RowStyles.Add(new RowStyle(SizeType.Percent, 50));       // 5: output
+        outerText.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));      // 6: status
 
-        outerText.Controls.Add(_toggleText, 0, 0);
+        outerText.Controls.Add(MakeTabHeader(
+            "TEXT PROTECTION",
+            "Encrypt and decrypt short text, notes, and ciphertext blocks."), 0, 0);
+        outerText.Controls.Add(_toggleText, 0, 1);
 
         var modeContainerText = new Panel { Dock = DockStyle.Fill };
         _pwPanelText.Dock = DockStyle.Fill;
         _pqcPanelText.Dock = DockStyle.Fill;
         modeContainerText.Controls.Add(_pwPanelText);
         modeContainerText.Controls.Add(_pqcPanelText);
-        outerText.Controls.Add(modeContainerText, 0, 1);
+        outerText.Controls.Add(modeContainerText, 0, 2);
 
         var inputContainer = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg };
         var lblInput = MakeLabel("PLAINTEXT / CIPHERTEXT", 7.5f);
@@ -2480,7 +2807,7 @@ class MainForm : Form
         };
         inputContainer.Controls.Add(inputBox);
         inputContainer.Controls.Add(lblInput);
-        outerText.Controls.Add(inputContainer, 0, 2);
+        outerText.Controls.Add(inputContainer, 0, 3);
 
         var btnRowText = new TableLayoutPanel
         {
@@ -2504,7 +2831,7 @@ class MainForm : Form
         btnRowText.Controls.Add(_btnTextDecrypt, 2, 0);
         btnRowText.Controls.Add(btnCopy,  3, 0);
         btnRowText.Controls.Add(_chkTextForceActions, 4, 0);
-        outerText.Controls.Add(btnRowText, 0, 3);
+        outerText.Controls.Add(btnRowText, 0, 4);
 
         var outputContainer = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg };
         var lblOutput = MakeLabel("OUTPUT", 7.5f);
@@ -2518,28 +2845,32 @@ class MainForm : Form
         };
         outputContainer.Controls.Add(outputBox);
         outputContainer.Controls.Add(lblOutput);
-        outerText.Controls.Add(outputContainer, 0, 4);
+        outerText.Controls.Add(outputContainer, 0, 5);
 
-        outerText.Controls.Add(_lblStatusText, 0, 5);
+        outerText.Controls.Add(_lblStatusText, 0, 6);
 
         // ==================================================================
         // VAULT TAB – layout
         // ==================================================================
         var outerVault = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 8,
+            Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 9,
             Padding = new Padding(16), BackColor = Theme.Bg,
         };
-        outerVault.RowStyles.Add(new RowStyle(SizeType.Absolute, 68));    // 0: drop zone
-        outerVault.RowStyles.Add(new RowStyle(SizeType.Absolute, 0));     // 1: drive letter (hidden)
-        outerVault.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));    // 2: toggle
-        outerVault.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));    // 3: mode panel
-        outerVault.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));    // 4: load vault
-        outerVault.RowStyles.Add(new RowStyle(SizeType.Percent, 62));     // 5: vault explorer
-        outerVault.RowStyles.Add(new RowStyle(SizeType.Percent, 38));     // 6: log
-        outerVault.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));    // 7: status + buttons
+        outerVault.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));    // 0: header
+        outerVault.RowStyles.Add(new RowStyle(SizeType.Absolute, 68));    // 1: drop zone
+        outerVault.RowStyles.Add(new RowStyle(SizeType.Absolute, 0));     // 2: drive letter (hidden)
+        outerVault.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));    // 3: toggle
+        outerVault.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));    // 4: mode panel
+        outerVault.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));    // 5: load vault
+        outerVault.RowStyles.Add(new RowStyle(SizeType.Percent, 62));     // 6: vault explorer
+        outerVault.RowStyles.Add(new RowStyle(SizeType.Percent, 38));     // 7: log
+        outerVault.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));    // 8: status + buttons
 
-        outerVault.Controls.Add(_dropZoneVault, 0, 0);
+        outerVault.Controls.Add(MakeTabHeader(
+            "VAULT",
+            "Create, open, and manage encrypted vault containers."), 0, 0);
+        outerVault.Controls.Add(_dropZoneVault, 0, 1);
 
         var driveRow = new TableLayoutPanel
         {
@@ -2558,14 +2889,14 @@ class MainForm : Form
         driveRow.Controls.Add(new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg }, 2, 0);
         // Mount/drive controls intentionally hidden in current UI.
 
-        outerVault.Controls.Add(_toggleVault, 0, 2);
+        outerVault.Controls.Add(_toggleVault, 0, 3);
 
         var modeContainerVault = new Panel { Dock = DockStyle.Fill };
         _pwPanelVault.Dock = DockStyle.Fill;
         _pqcPanelVault.Dock = DockStyle.Fill;
         modeContainerVault.Controls.Add(_pwPanelVault);
         modeContainerVault.Controls.Add(_pqcPanelVault);
-        outerVault.Controls.Add(modeContainerVault, 0, 3);
+        outerVault.Controls.Add(modeContainerVault, 0, 4);
 
         var loadRow = new TableLayoutPanel
         {
@@ -2589,7 +2920,7 @@ class MainForm : Form
         loadRow.Controls.Add(_btnLoadVault, 2, 0);
         loadRow.Controls.Add(_btnRekeyVault, 3, 0);
         loadRow.Controls.Add(_btnUnloadVault, 4, 0);
-        outerVault.Controls.Add(loadRow, 0, 4);
+        outerVault.Controls.Add(loadRow, 0, 5);
 
         var listContainerVault = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Surface };
         listContainerVault.Controls.Add(_tvVaultContents);
@@ -2599,7 +2930,7 @@ class MainForm : Form
             using var pen = new Pen(Theme.Border, 1f);
             pe.Graphics.DrawRectangle(pen, 0, 0, listContainerVault.Width - 1, listContainerVault.Height - 1);
         };
-        outerVault.Controls.Add(listContainerVault, 0, 5);
+        outerVault.Controls.Add(listContainerVault, 0, 6);
 
         var logContainerVault = new Panel { Dock = DockStyle.Fill, BackColor = Theme.LogBg };
         logContainerVault.Controls.Add(_rtbLogVault);
@@ -2608,7 +2939,7 @@ class MainForm : Form
             using var pen = new Pen(Theme.Border, 1f);
             pe.Graphics.DrawRectangle(pen, 0, 0, logContainerVault.Width - 1, logContainerVault.Height - 1);
         };
-        outerVault.Controls.Add(logContainerVault, 0, 6);
+        outerVault.Controls.Add(logContainerVault, 0, 7);
 
         var vaultBar = new TableLayoutPanel
         {
@@ -2626,7 +2957,7 @@ class MainForm : Form
         vaultBar.Controls.Add(_btnAddToVault,  2, 0);
         vaultBar.Controls.Add(_btnExtractVaultItem, 3, 0);
         vaultBar.Controls.Add(_btnRemoveVaultItem, 4, 0);
-        outerVault.Controls.Add(vaultBar, 0, 7);        // ==================================================================
+        outerVault.Controls.Add(vaultBar, 0, 8);        // ==================================================================
         // EXCHANGE TAB - layout
         // ==================================================================
         var txtMyPubPath = MakeTextBox(); txtMyPubPath.ReadOnly = true; txtMyPubPath.PlaceholderText = "My public key path (.bin/.pem)";
@@ -4458,14 +4789,18 @@ class MainForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            RowCount = 4,
+            RowCount = 5,
             Padding = new Padding(16),
             BackColor = Theme.Bg,
         };
+        outerKx2.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));
         outerKx2.RowStyles.Add(new RowStyle(SizeType.Percent, 60));
         outerKx2.RowStyles.Add(new RowStyle(SizeType.Absolute, 196));
         outerKx2.RowStyles.Add(new RowStyle(SizeType.Percent, 40));
         outerKx2.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
+        outerKx2.Controls.Add(MakeTabHeader(
+            "SECURE CONTACTS",
+            "Manage your identity and trusted recipient keys for secure exchange."), 0, 0);
 
         var topGrid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = Theme.Bg };
         topGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
@@ -4571,7 +4906,7 @@ class MainForm : Form
 
         topGrid.Controls.Add(myKeyCard, 0, 0);
         topGrid.Controls.Add(recipientCard, 1, 0);
-        outerKx2.Controls.Add(topGrid, 0, 0);
+        outerKx2.Controls.Add(topGrid, 0, 1);
 
         var detailsCard = new TableLayoutPanel
         {
@@ -4647,7 +4982,7 @@ class MainForm : Form
             using var pen = new Pen(Theme.Border, 1f);
             pe.Graphics.DrawRectangle(pen, 0, 0, detailsContainer.Width - 1, detailsContainer.Height - 1);
         };
-        outerKx2.Controls.Add(detailsContainer, 0, 1);
+        outerKx2.Controls.Add(detailsContainer, 0, 2);
         var activityCard = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, BackColor = Theme.Surface, Padding = new Padding(8, 6, 8, 8), Margin = new Padding(0) };
         activityCard.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
         activityCard.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
@@ -4668,8 +5003,8 @@ class MainForm : Form
             using var pen = new Pen(Theme.Border, 1f);
             pe.Graphics.DrawRectangle(pen, 0, 0, activityContainer.Width - 1, activityContainer.Height - 1);
         };
-        outerKx2.Controls.Add(activityContainer, 0, 2);
-        outerKx2.Controls.Add(lblKx2Status, 0, 3);
+        outerKx2.Controls.Add(activityContainer, 0, 3);
+        outerKx2.Controls.Add(lblKx2Status, 0, 4);
 
         Kx2LoadIdentityProfile();
         Kx2LoadRecipients();
@@ -4677,17 +5012,6 @@ class MainForm : Form
         // ==================================================================
         // SETTINGS TAB - centralized sensitive actions
         // ==================================================================
-        var lblSettingsTitle = MakeLabel("KEY MANAGEMENT", 9.5f, bold: true);
-        lblSettingsTitle.Dock = DockStyle.Fill;
-        lblSettingsTitle.TextAlign = ContentAlignment.MiddleLeft;
-        lblSettingsTitle.ForeColor = Theme.Accent;
-
-        var lblSettingsInfo = MakeLabel(
-            "Generate new keypairs only from Settings. Older encrypted data may still require older private keys.",
-            8.5f);
-        lblSettingsInfo.Dock = DockStyle.Fill;
-        lblSettingsInfo.TextAlign = ContentAlignment.MiddleLeft;
-
         var txtSettingsKeys = MakeTextBox();
         txtSettingsKeys.ReadOnly = true;
         txtSettingsKeys.Multiline = true;
@@ -4906,12 +5230,12 @@ class MainForm : Form
                 MessageBoxDefaultButton.Button1);
             if (result == DialogResult.Yes)
             {
-                _tabs.SelectedIndex = 5; // Settings
+                _tabs.SelectedIndex = 6; // Settings
                 btnSettingsGenerate.PerformClick();
             }
             else if (result == DialogResult.No)
             {
-                _tabs.SelectedIndex = 5; // Settings
+                _tabs.SelectedIndex = 6; // Settings
                 btnSettingsRestore.PerformClick();
             }
         }
@@ -4994,22 +5318,22 @@ class MainForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            RowCount = 6,
+            RowCount = 5,
             Padding = new Padding(16),
             BackColor = Theme.Bg,
         };
-        outerSettings.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
-        outerSettings.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
+        outerSettings.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));
         outerSettings.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
         outerSettings.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
         outerSettings.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
         outerSettings.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        outerSettings.Controls.Add(lblSettingsTitle, 0, 0);
-        outerSettings.Controls.Add(lblSettingsInfo, 0, 1);
-        outerSettings.Controls.Add(btnSettingsGenerate, 0, 2);
-        outerSettings.Controls.Add(settingsKeypairOpsRow, 0, 3);
-        outerSettings.Controls.Add(settingsIntegrationRow, 0, 4);
-        outerSettings.Controls.Add(txtSettingsKeys, 0, 5);
+        outerSettings.Controls.Add(MakeTabHeader(
+            "SETTINGS",
+            "Manage local keys, backups, and shell integration."), 0, 0);
+        outerSettings.Controls.Add(btnSettingsGenerate, 0, 1);
+        outerSettings.Controls.Add(settingsKeypairOpsRow, 0, 2);
+        outerSettings.Controls.Add(settingsIntegrationRow, 0, 3);
+        outerSettings.Controls.Add(txtSettingsKeys, 0, 4);
 
         // ==================================================================
         // ABOUT TAB - product overview and usage guide
@@ -5186,11 +5510,11 @@ class MainForm : Form
         {
             Dock = DockStyle.Fill,
             Margin = new Padding(0, 2, 0, 2),
-            Filter = "Supported containers|*.obsq;*.vault;*.obsqv|ObsidianQ files|*.obsq|Vault files|*.vault;*.obsqv|All files|*.*",
+            Filter = "Supported containers|*.obsq;*.vault;*.obsqv;*.zip;*.exe|ObsidianQ files|*.obsq|Vault files|*.vault;*.obsqv|Self-Extracting Package|*_SecureDelivery.zip;*.zip;*_SecureDelivery.exe;*.exe|All files|*.*",
         };
         var txtInspectPath = MakeTextBox();
         txtInspectPath.ReadOnly = true;
-        txtInspectPath.PlaceholderText = "Drop or browse a container file (.obsq, .vault, .obsqv)";
+        txtInspectPath.PlaceholderText = "Drop or browse a container file (.obsq, .vault, .obsqv, .zip, .exe)";
         var lblInspectTypeVal = MakeLabel("-", 8.5f); lblInspectTypeVal.ForeColor = Theme.Accent; lblInspectTypeVal.Dock = DockStyle.Fill;
         var lblInspectModeVal = MakeLabel("-", 8.5f); lblInspectModeVal.ForeColor = Theme.Accent; lblInspectModeVal.Dock = DockStyle.Fill;
         var lblInspectVersionVal = MakeLabel("-", 8.5f); lblInspectVersionVal.ForeColor = Theme.Accent; lblInspectVersionVal.Dock = DockStyle.Fill;
@@ -5248,6 +5572,107 @@ class MainForm : Form
         }
         async Task InspectPathAsync(string path)
         {
+            const string inspectSfxMagic = "OBSQSFX1";
+            const int inspectSfxTrailerSize = 24;
+
+            bool TryGetEmbeddedSfxInfoForInspect(string hostExePath, out long packageOffset, out long packageLength, out long cliOffset, out long cliLength)
+            {
+                packageOffset = packageLength = cliOffset = cliLength = 0;
+                try
+                {
+                    using var fs = new FileStream(hostExePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                    if (fs.Length <= inspectSfxTrailerSize) return false;
+                    fs.Seek(-inspectSfxTrailerSize, SeekOrigin.End);
+                    Span<byte> trailer = stackalloc byte[inspectSfxTrailerSize];
+                    int got = fs.Read(trailer);
+                    if (got != inspectSfxTrailerSize) return false;
+
+                    string magic = Encoding.ASCII.GetString(trailer.Slice(16, 8));
+                    if (!string.Equals(magic, inspectSfxMagic, StringComparison.Ordinal)) return false;
+
+                    long pkgLen = BitConverter.ToInt64(trailer.Slice(0, 8));
+                    long cLen = BitConverter.ToInt64(trailer.Slice(8, 8));
+                    if (pkgLen <= 0 || cLen <= 0) return false;
+
+                    long payloadStart = fs.Length - inspectSfxTrailerSize - pkgLen - cLen;
+                    if (payloadStart < 0) return false;
+                    long cOff = payloadStart + pkgLen;
+                    if (cOff < 0 || cOff + cLen > fs.Length) return false;
+
+                    packageOffset = payloadStart;
+                    packageLength = pkgLen;
+                    cliOffset = cOff;
+                    cliLength = cLen;
+                    return true;
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+
+            bool TryExtractEmbeddedPackageZip(string hostExePath, long packageOffset, long packageLength, out string tempZipPath)
+            {
+                tempZipPath = string.Empty;
+                try
+                {
+                    string tempDir = Path.Combine(Path.GetTempPath(), "ObsidianQ", "inspect");
+                    Directory.CreateDirectory(tempDir);
+                    tempZipPath = Path.Combine(tempDir, $"inspect_{Guid.NewGuid():N}.zip");
+
+                    using var src = new FileStream(hostExePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                    using var dst = new FileStream(tempZipPath, FileMode.Create, FileAccess.Write, FileShare.None);
+                    src.Seek(packageOffset, SeekOrigin.Begin);
+
+                    byte[] buf = new byte[128 * 1024];
+                    long remain = packageLength;
+                    while (remain > 0)
+                    {
+                        int want = (int)Math.Min(buf.Length, remain);
+                        int n = src.Read(buf, 0, want);
+                        if (n <= 0) break;
+                        dst.Write(buf, 0, n);
+                        remain -= n;
+                    }
+                    dst.Flush();
+                    return remain == 0 && File.Exists(tempZipPath);
+                }
+                catch
+                {
+                    try { if (!string.IsNullOrWhiteSpace(tempZipPath) && File.Exists(tempZipPath)) File.Delete(tempZipPath); } catch { }
+                    tempZipPath = string.Empty;
+                    return false;
+                }
+            }
+
+            bool TryExtractZipEntryToTempFile(string zipPath, string entryName, string tempExtension, out string tempFilePath)
+            {
+                tempFilePath = string.Empty;
+                try
+                {
+                    using var zf = ZipFile.OpenRead(zipPath);
+                    var entry = zf.Entries.FirstOrDefault(e =>
+                        string.Equals(e.FullName, entryName, StringComparison.OrdinalIgnoreCase));
+                    if (entry == null) return false;
+
+                    string tempDir = Path.Combine(Path.GetTempPath(), "ObsidianQ", "inspect");
+                    Directory.CreateDirectory(tempDir);
+                    tempFilePath = Path.Combine(tempDir, $"inspect_{Guid.NewGuid():N}{tempExtension}");
+
+                    using var src = entry.Open();
+                    using var dst = new FileStream(tempFilePath, FileMode.Create, FileAccess.Write, FileShare.None);
+                    src.CopyTo(dst);
+                    dst.Flush();
+                    return File.Exists(tempFilePath);
+                }
+                catch
+                {
+                    try { if (!string.IsNullOrWhiteSpace(tempFilePath) && File.Exists(tempFilePath)) File.Delete(tempFilePath); } catch { }
+                    tempFilePath = string.Empty;
+                    return false;
+                }
+            }
+
             ResetInspect();
             txtInspectPath.Text = path;
             if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
@@ -5284,10 +5709,314 @@ class MainForm : Form
                 || StartsWithSig(head, n, Encoding.ASCII.GetBytes("OBSQV"))
                 || StartsWithSig(head, n, Encoding.ASCII.GetBytes("OBSV"));
             bool isObsqMagic = StartsWithSig(head, n, Encoding.ASCII.GetBytes("OBSQ"));
+            bool isZip = string.Equals(Path.GetExtension(path), ".zip", StringComparison.OrdinalIgnoreCase);
+            bool isExe = string.Equals(Path.GetExtension(path), ".exe", StringComparison.OrdinalIgnoreCase);
 
             var sb = new StringBuilder();
             sb.AppendLine($"Path: {path}");
             sb.AppendLine($"Modified: {(modified == DateTime.MinValue ? "-" : modified.ToString("yyyy-MM-dd HH:mm:ss"))}");
+
+            if (isExe && TryGetEmbeddedSfxInfoForInspect(path, out var pkgOff, out var pkgLen, out _, out _))
+            {
+                lblInspectTypeVal.Text = "Self-Extracting Package (EXE)";
+                lblInspectModeVal.Text = "Password";
+
+                string? tempZip = null;
+                try
+                {
+                    if (!TryExtractEmbeddedPackageZip(path, pkgOff, pkgLen, out var extractedZip))
+                    {
+                        lblInspectVersionVal.Text = "Unknown";
+                        sb.AppendLine("Container: Self-Extracting Package (EXE)");
+                        sb.AppendLine("Embedded package: detected");
+                        sb.AppendLine("Inspect detail: failed to extract embedded package segment.");
+                        rtbInspect.Text = sb.ToString();
+                        InspectStatus("Detected SFX EXE, but failed to read embedded package.", error: true);
+                        return;
+                    }
+                    tempZip = extractedZip;
+
+                    var (dCode, dStdout, dStderr) = await RunInspectCliAsync($"delivery inspect --json \"{tempZip}\"");
+                    if (!string.IsNullOrWhiteSpace(dStderr))
+                        sb.AppendLine($"Inspect stderr: {dStderr.TrimEnd()}");
+
+                    string schema = "Unknown";
+                    string packageName = Path.GetFileNameWithoutExtension(path);
+                    string packageFormat = "secure_delivery_zip";
+                    string itemCount = "Unknown";
+                    string totalBytes = "Unknown";
+                    string hash = "Unknown";
+                    string instructions = "Unknown";
+
+                    if (dCode == 0 && !string.IsNullOrWhiteSpace(dStdout))
+                    {
+                        try
+                        {
+                            using var doc = JsonDocument.Parse(dStdout);
+                            if (doc.RootElement.TryGetProperty("data", out var data))
+                            {
+                                if (data.TryGetProperty("schema_version", out var sv)) schema = sv.GetRawText();
+                                if (data.TryGetProperty("package_name", out var pn)) packageName = pn.GetString() ?? packageName;
+                                if (data.TryGetProperty("package_format", out var pf)) packageFormat = pf.GetString() ?? packageFormat;
+                                if (data.TryGetProperty("source_item_count", out var ic)) itemCount = ic.GetRawText();
+                                if (data.TryGetProperty("source_total_bytes", out var tb)) totalBytes = tb.GetRawText();
+                                if (data.TryGetProperty("payload_sha256", out var hs)) hash = hs.GetString() ?? hash;
+                                if (data.TryGetProperty("has_instructions", out var hi)) instructions = hi.GetRawText();
+                            }
+                        }
+                        catch { }
+                    }
+
+                    lblInspectVersionVal.Text = schema;
+                    sb.AppendLine("Container: Self-Extracting Package (EXE)");
+                    sb.AppendLine($"Schema version: {schema}");
+                    sb.AppendLine($"Package name: {packageName}");
+                    sb.AppendLine($"Package format: {packageFormat}");
+                    sb.AppendLine($"Source item count: {itemCount}");
+                    sb.AppendLine($"Source total bytes: {totalBytes}");
+                    sb.AppendLine($"Has instructions: {instructions}");
+                    sb.AppendLine($"Payload SHA-256: {hash}");
+                    sb.AppendLine();
+
+                    var (vCode, vStdout, vStderr) = await RunInspectCliAsync($"delivery verify --json \"{tempZip}\"");
+                    if (vCode == 0)
+                    {
+                        sb.AppendLine("Integrity: VERIFIED");
+                        InspectStatus("Self-Extracting EXE package verified.");
+                    }
+                    else
+                    {
+                        string verifyErr = !string.IsNullOrWhiteSpace(vStderr) ? vStderr.TrimEnd() : "verification failed";
+                        try
+                        {
+                            using var vdoc = JsonDocument.Parse(vStdout);
+                            if (vdoc.RootElement.TryGetProperty("error", out var err) &&
+                                err.TryGetProperty("message", out var msg))
+                                verifyErr = msg.GetString() ?? verifyErr;
+                        }
+                        catch { }
+                        sb.AppendLine($"Integrity: FAILED ({verifyErr})");
+                        InspectStatus("Self-Extracting EXE package verification failed.", error: true);
+                    }
+
+                    rtbInspect.Text = sb.ToString();
+                    return;
+                }
+                finally
+                {
+                    try { if (!string.IsNullOrWhiteSpace(tempZip) && File.Exists(tempZip)) File.Delete(tempZip); } catch { }
+                }
+            }
+
+            if (isZip)
+            {
+                bool looksLikeDelivery = false;
+                bool looksLikeWrappedExe = false;
+                try
+                {
+                    using var zf = ZipFile.OpenRead(path);
+                    looksLikeDelivery = zf.Entries.Any(e =>
+                        string.Equals(e.FullName, "secure_delivery_manifest.json", StringComparison.OrdinalIgnoreCase));
+                    looksLikeWrappedExe = zf.Entries.Any(e =>
+                        string.Equals(Path.GetFileName(e.FullName), "Click_Here_to_Decrypt.exe", StringComparison.OrdinalIgnoreCase));
+                }
+                catch { /* not a valid zip or inaccessible */ }
+
+                if (looksLikeDelivery)
+                {
+                    lblInspectTypeVal.Text = "Self-Extracting Package";
+                    lblInspectModeVal.Text = "Password";
+
+                    var (dCode, dStdout, dStderr) = await RunInspectCliAsync($"delivery inspect --json \"{path}\"");
+                    if (!string.IsNullOrWhiteSpace(dStderr))
+                        sb.AppendLine($"Inspect stderr: {dStderr.TrimEnd()}");
+
+                    string schema = "Unknown";
+                    string packageName = Path.GetFileNameWithoutExtension(path);
+                    string packageFormat = "secure_delivery_zip";
+                    string itemCount = "Unknown";
+                    string totalBytes = "Unknown";
+                    string hash = "Unknown";
+                    string instructions = "Unknown";
+
+                    if (dCode == 0 && !string.IsNullOrWhiteSpace(dStdout))
+                    {
+                        try
+                        {
+                            using var doc = JsonDocument.Parse(dStdout);
+                            if (doc.RootElement.TryGetProperty("data", out var data))
+                            {
+                                if (data.TryGetProperty("schema_version", out var sv)) schema = sv.GetRawText();
+                                if (data.TryGetProperty("package_name", out var pn)) packageName = pn.GetString() ?? packageName;
+                                if (data.TryGetProperty("package_format", out var pf)) packageFormat = pf.GetString() ?? packageFormat;
+                                if (data.TryGetProperty("source_item_count", out var ic)) itemCount = ic.GetRawText();
+                                if (data.TryGetProperty("source_total_bytes", out var tb)) totalBytes = tb.GetRawText();
+                                if (data.TryGetProperty("payload_sha256", out var hs)) hash = hs.GetString() ?? hash;
+                                if (data.TryGetProperty("has_instructions", out var hi)) instructions = hi.GetRawText();
+                            }
+                        }
+                        catch { /* leave defaults */ }
+                    }
+
+                    lblInspectVersionVal.Text = schema;
+                    sb.AppendLine("Container: Self-Extracting Package");
+                    sb.AppendLine($"Schema version: {schema}");
+                    sb.AppendLine($"Package name: {packageName}");
+                    sb.AppendLine($"Package format: {packageFormat}");
+                    sb.AppendLine($"Source item count: {itemCount}");
+                    sb.AppendLine($"Source total bytes: {totalBytes}");
+                    sb.AppendLine($"Has instructions: {instructions}");
+                    sb.AppendLine($"Payload SHA-256: {hash}");
+                    sb.AppendLine();
+
+                    var (vCode, vStdout, vStderr) = await RunInspectCliAsync($"delivery verify --json \"{path}\"");
+                    if (vCode == 0)
+                    {
+                        sb.AppendLine("Integrity: VERIFIED");
+                        InspectStatus("Self-Extracting package verified.");
+                    }
+                    else
+                    {
+                        string verifyErr = !string.IsNullOrWhiteSpace(vStderr) ? vStderr.TrimEnd() : "verification failed";
+                        try
+                        {
+                            using var vdoc = JsonDocument.Parse(vStdout);
+                            if (vdoc.RootElement.TryGetProperty("error", out var err) &&
+                                err.TryGetProperty("message", out var msg))
+                                verifyErr = msg.GetString() ?? verifyErr;
+                        }
+                        catch { /* keep stderr fallback */ }
+                        sb.AppendLine($"Integrity: FAILED ({verifyErr})");
+                        InspectStatus("Self-Extracting package verification failed.", error: true);
+                    }
+
+                    rtbInspect.Text = sb.ToString();
+                    return;
+                }
+
+                if (looksLikeWrappedExe)
+                {
+                    string? tempExe = null;
+                    string? tempZip = null;
+                    try
+                    {
+                        if (!TryExtractZipEntryToTempFile(path, "Click_Here_to_Decrypt.exe", ".exe", out var extractedExe))
+                        {
+                            lblInspectTypeVal.Text = "Self-Extracting Package (ZIP)";
+                            lblInspectModeVal.Text = "Password";
+                            lblInspectVersionVal.Text = "Unknown";
+                            sb.AppendLine("Container: Self-Extracting Package (ZIP)");
+                            sb.AppendLine("Embedded launcher: detected");
+                            sb.AppendLine("Inspect detail: failed to extract Click_Here_to_Decrypt.exe from archive.");
+                            rtbInspect.Text = sb.ToString();
+                            InspectStatus("Detected wrapped SFX ZIP, but failed to read embedded launcher.", error: true);
+                            return;
+                        }
+                        tempExe = extractedExe;
+
+                        if (!TryGetEmbeddedSfxInfoForInspect(tempExe, out var wrappedPkgOff, out var wrappedPkgLen, out _, out _))
+                        {
+                            lblInspectTypeVal.Text = "Self-Extracting Package (ZIP)";
+                            lblInspectModeVal.Text = "Password";
+                            lblInspectVersionVal.Text = "Unknown";
+                            sb.AppendLine("Container: Self-Extracting Package (ZIP)");
+                            sb.AppendLine("Embedded launcher: present");
+                            sb.AppendLine("Inspect detail: launcher does not contain an embedded ObsidianQ package.");
+                            rtbInspect.Text = sb.ToString();
+                            InspectStatus("Wrapped SFX ZIP found, but the embedded launcher was not a valid package.", error: true);
+                            return;
+                        }
+
+                        if (!TryExtractEmbeddedPackageZip(tempExe, wrappedPkgOff, wrappedPkgLen, out var extractedZip))
+                        {
+                            lblInspectTypeVal.Text = "Self-Extracting Package (ZIP)";
+                            lblInspectModeVal.Text = "Password";
+                            lblInspectVersionVal.Text = "Unknown";
+                            sb.AppendLine("Container: Self-Extracting Package (ZIP)");
+                            sb.AppendLine("Embedded package: detected");
+                            sb.AppendLine("Inspect detail: failed to extract embedded package segment from launcher.");
+                            rtbInspect.Text = sb.ToString();
+                            InspectStatus("Wrapped SFX ZIP found, but failed to extract the embedded package.", error: true);
+                            return;
+                        }
+                        tempZip = extractedZip;
+
+                        lblInspectTypeVal.Text = "Self-Extracting Package (ZIP)";
+                        lblInspectModeVal.Text = "Password";
+
+                        var (dCode, dStdout, dStderr) = await RunInspectCliAsync($"delivery inspect --json \"{tempZip}\"");
+                        if (!string.IsNullOrWhiteSpace(dStderr))
+                            sb.AppendLine($"Inspect stderr: {dStderr.TrimEnd()}");
+
+                        string schema = "Unknown";
+                        string packageName = Path.GetFileNameWithoutExtension(path).Replace("_SecureDelivery", "", StringComparison.OrdinalIgnoreCase);
+                        string packageFormat = "secure_delivery_zip";
+                        string itemCount = "Unknown";
+                        string totalBytes = "Unknown";
+                        string hash = "Unknown";
+                        string instructions = "Unknown";
+
+                        if (dCode == 0 && !string.IsNullOrWhiteSpace(dStdout))
+                        {
+                            try
+                            {
+                                using var doc = JsonDocument.Parse(dStdout);
+                                if (doc.RootElement.TryGetProperty("data", out var data))
+                                {
+                                    if (data.TryGetProperty("schema_version", out var sv)) schema = sv.GetRawText();
+                                    if (data.TryGetProperty("package_name", out var pn)) packageName = pn.GetString() ?? packageName;
+                                    if (data.TryGetProperty("package_format", out var pf)) packageFormat = pf.GetString() ?? packageFormat;
+                                    if (data.TryGetProperty("source_item_count", out var ic)) itemCount = ic.GetRawText();
+                                    if (data.TryGetProperty("source_total_bytes", out var tb)) totalBytes = tb.GetRawText();
+                                    if (data.TryGetProperty("payload_sha256", out var hs)) hash = hs.GetString() ?? hash;
+                                    if (data.TryGetProperty("has_instructions", out var hi)) instructions = hi.GetRawText();
+                                }
+                            }
+                            catch { /* leave defaults */ }
+                        }
+
+                        lblInspectVersionVal.Text = schema;
+                        sb.AppendLine("Container: Self-Extracting Package (ZIP)");
+                        sb.AppendLine($"Schema version: {schema}");
+                        sb.AppendLine($"Package name: {packageName}");
+                        sb.AppendLine($"Package format: {packageFormat}");
+                        sb.AppendLine($"Source item count: {itemCount}");
+                        sb.AppendLine($"Source total bytes: {totalBytes}");
+                        sb.AppendLine($"Has instructions: {instructions}");
+                        sb.AppendLine($"Payload SHA-256: {hash}");
+                        sb.AppendLine();
+
+                        var (vCode, vStdout, vStderr) = await RunInspectCliAsync($"delivery verify --json \"{tempZip}\"");
+                        if (vCode == 0)
+                        {
+                            sb.AppendLine("Integrity: VERIFIED");
+                            InspectStatus("Self-Extracting ZIP package verified.");
+                        }
+                        else
+                        {
+                            string verifyErr = !string.IsNullOrWhiteSpace(vStderr) ? vStderr.TrimEnd() : "verification failed";
+                            try
+                            {
+                                using var vdoc = JsonDocument.Parse(vStdout);
+                                if (vdoc.RootElement.TryGetProperty("error", out var err) &&
+                                    err.TryGetProperty("message", out var msg))
+                                    verifyErr = msg.GetString() ?? verifyErr;
+                            }
+                            catch { /* keep stderr fallback */ }
+                            sb.AppendLine($"Integrity: FAILED ({verifyErr})");
+                            InspectStatus("Self-Extracting ZIP package verification failed.", error: true);
+                        }
+
+                        rtbInspect.Text = sb.ToString();
+                        return;
+                    }
+                    finally
+                    {
+                        try { if (!string.IsNullOrWhiteSpace(tempZip) && File.Exists(tempZip)) File.Delete(tempZip); } catch { }
+                        try { if (!string.IsNullOrWhiteSpace(tempExe) && File.Exists(tempExe)) File.Delete(tempExe); } catch { }
+                    }
+                }
+            }
 
             if (isVaultMagic || IsNativeVaultPath(path))
             {
@@ -5377,7 +6106,7 @@ class MainForm : Form
             using var dlg = new OpenFileDialog
             {
                 Title = "Select container to inspect",
-                Filter = "Supported containers|*.obsq;*.vault;*.obsqv|All files|*.*",
+                Filter = "Supported containers|*.obsq;*.vault;*.obsqv;*.zip;*.exe|All files|*.*",
             };
             if (dlg.ShowDialog(this) == DialogResult.OK)
                 inspectDrop.SetFile(dlg.FileName);
@@ -5425,20 +6154,817 @@ class MainForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            RowCount = 5,
+            RowCount = 6,
             Padding = new Padding(16),
             BackColor = Theme.Bg,
         };
+        outerInspect.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));
         outerInspect.RowStyles.Add(new RowStyle(SizeType.Absolute, 68));
         outerInspect.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
         outerInspect.RowStyles.Add(new RowStyle(SizeType.Absolute, 100));
         outerInspect.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         outerInspect.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
-        outerInspect.Controls.Add(inspectDrop, 0, 0);
-        outerInspect.Controls.Add(inspectPathRow, 0, 1);
-        outerInspect.Controls.Add(inspectInfoGrid, 0, 2);
-        outerInspect.Controls.Add(inspectLogBox, 0, 3);
-        outerInspect.Controls.Add(lblInspectStatus, 0, 4);
+        outerInspect.Controls.Add(MakeTabHeader(
+            "INSPECT",
+            "Review supported containers and verify package integrity without decrypting contents."), 0, 0);
+        outerInspect.Controls.Add(inspectDrop, 0, 1);
+        outerInspect.Controls.Add(inspectPathRow, 0, 2);
+        outerInspect.Controls.Add(inspectInfoGrid, 0, 3);
+        outerInspect.Controls.Add(inspectLogBox, 0, 4);
+        outerInspect.Controls.Add(lblInspectStatus, 0, 5);
+
+        // ==================================================================
+        // SELF-EXTRACTING PACKAGE TAB - self-extracting package workflows
+        // ==================================================================
+        var txtDelPassword = MakeTextBox(password: true);
+        var txtDelPasswordConfirm = MakeTextBox(password: true);
+        var txtDelName = MakeTextBox();
+        txtDelName.PlaceholderText = "Package name (without extension)";
+        txtDelName.Text = "delivery";
+        var txtDelOutputDir = MakeTextBox();
+        txtDelOutputDir.Text = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+        var txtDelPackagePath = MakeTextBox();
+        txtDelPackagePath.PlaceholderText = "Self-Extracting package path (.zip/.exe)";
+        var txtDelInstructions = MakeTextBox();
+        txtDelInstructions.Multiline = true;
+        txtDelInstructions.ScrollBars = ScrollBars.Vertical;
+        txtDelInstructions.Text =
+            "1) If you received a ZIP, extract all files first." + "\r\n" +
+            "2) Run Click_Here_to_Decrypt.exe (or open the Single EXE package)." + "\r\n" +
+            "3) Enter your password when prompted." + "\r\n" +
+            "4) Choose where to extract your files.";
+        var txtDelExtractOut = MakeTextBox();
+        txtDelExtractOut.Text = string.Empty;
+        var chkDelCompress = new CheckBox { Text = "Compress files before packaging", AutoSize = true, ForeColor = Theme.TextMain, BackColor = Theme.Bg, Font = Theme.SafeMono(8.5f) };
+        var chkDelIncludeInstructions = new CheckBox { Text = "Include custom extraction instructions", AutoSize = true, Checked = false, ForeColor = Theme.TextMain, BackColor = Theme.Bg, Font = Theme.SafeMono(8.5f) };
+        var rbDelZip = new RadioButton { Text = "ZIP Archive (Recommended)", AutoSize = true, Checked = true, ForeColor = Theme.TextMain, BackColor = Theme.Bg, Font = Theme.SafeMono(8.5f) };
+        var rbDelExe = new RadioButton { Text = "Single EXE File", AutoSize = true, ForeColor = Theme.TextMain, BackColor = Theme.Bg, Font = Theme.SafeMono(8.5f) };
+        var lstDelSources = new ListBox
+        {
+            Dock = DockStyle.Fill,
+            BackColor = Theme.Surface,
+            ForeColor = Theme.TextMain,
+            BorderStyle = BorderStyle.FixedSingle,
+            Font = Theme.SafeMono(8.5f),
+            IntegralHeight = false,
+            HorizontalScrollbar = true,
+        };
+        lstDelSources.HandleCreated += (_, _) => SetWindowTheme(lstDelSources.Handle, "DarkMode_Explorer", null);
+        var txtDelDetailsLog = MakeTextBox();
+        txtDelDetailsLog.Multiline = true;
+        txtDelDetailsLog.ScrollBars = ScrollBars.Both;
+        txtDelDetailsLog.ReadOnly = true;
+        txtDelDetailsLog.WordWrap = false;
+        txtDelDetailsLog.BackColor = Theme.LogBg;
+        txtDelDetailsLog.ForeColor = Theme.Accent;
+        txtDelDetailsLog.Font = Theme.SafeMono(8.5f);
+        var lblDelActivity = MakeLabel("No activity yet.", 8.5f);
+        lblDelActivity.ForeColor = Theme.TextDim;
+        lblDelActivity.AutoSize = false;
+        lblDelActivity.AutoEllipsis = true;
+        lblDelActivity.Dock = DockStyle.Fill;
+        lblDelActivity.TextAlign = ContentAlignment.MiddleLeft;
+        var lblDelStatus = MakeLabel("READY", 8.5f);
+        lblDelStatus.ForeColor = Theme.Accent;
+        lblDelStatus.AutoSize = false;
+        lblDelStatus.AutoEllipsis = true;
+        lblDelStatus.Dock = DockStyle.Fill;
+        lblDelStatus.TextAlign = ContentAlignment.MiddleLeft;
+        var lblDelSummary = MakeLabel("0 source items", 8.5f);
+        lblDelSummary.ForeColor = Theme.TextDim;
+        lblDelSummary.AutoSize = false;
+        lblDelSummary.AutoEllipsis = true;
+        lblDelSummary.Dock = DockStyle.Fill;
+        lblDelSummary.TextAlign = ContentAlignment.MiddleLeft;
+        var lblDelOutputPreview = MakeLabel("-", 8.5f);
+        lblDelOutputPreview.ForeColor = Theme.Accent;
+        lblDelOutputPreview.AutoSize = false;
+        lblDelOutputPreview.AutoEllipsis = true;
+        lblDelOutputPreview.Dock = DockStyle.Fill;
+        lblDelOutputPreview.TextAlign = ContentAlignment.MiddleLeft;
+        var lblDelPasswordStrength = MakeLabel("Password strength: -", 8.5f);
+        lblDelPasswordStrength.ForeColor = Theme.TextDim;
+        lblDelPasswordStrength.AutoSize = false;
+        lblDelPasswordStrength.AutoEllipsis = true;
+        lblDelPasswordStrength.Dock = DockStyle.Fill;
+        lblDelPasswordStrength.TextAlign = ContentAlignment.MiddleLeft;
+        NeonButton btnDelCreate = new();
+        var delProgress = new NeonProgressBar
+        {
+            Dock = DockStyle.Fill,
+            Minimum = 0,
+            Maximum = 100,
+            Value = 0,
+            Style = ProgressBarStyle.Continuous,
+        };
+        Action<bool> setDeliveryProgressVisibility = _ => { };
+        bool delNameUserEdited = false;
+        bool suppressDelNameUserEditedTracking = false;
+        string? lastAutoDeliveryName = null;
+        var delDetailsLogSb = new StringBuilder();
+
+        string ToSingleLine(string text)
+        {
+            var line = (text ?? string.Empty)
+                .Replace("\r", " ")
+                .Replace("\n", " ")
+                .Trim();
+            if (line.Length > 180) line = line[..177] + "...";
+            return line;
+        }
+
+        void DelLog(string text, Color color)
+        {
+            string entry = text ?? string.Empty;
+            if (delDetailsLogSb.Length > 0) delDetailsLogSb.AppendLine();
+            delDetailsLogSb.Append(entry);
+            txtDelDetailsLog.Text = delDetailsLogSb.ToString();
+            txtDelDetailsLog.SelectionStart = txtDelDetailsLog.TextLength;
+            txtDelDetailsLog.ScrollToCaret();
+
+            string line = ToSingleLine(entry);
+            if (!string.IsNullOrWhiteSpace(line))
+            {
+                lblDelActivity.ForeColor = color == Theme.Error ? Theme.Error : Theme.TextDim;
+                lblDelActivity.Text = line;
+            }
+        }
+
+        void DelStatus(string text, bool error = false)
+        {
+            lblDelStatus.ForeColor = error ? Theme.Error : Theme.Accent;
+            lblDelStatus.Text = text;
+            DelLog((error ? "[ERR] " : "[OK] ") + text, error ? Theme.Error : Theme.Accent);
+        }
+
+        string BuildDeliveryPackagePath()
+        {
+            string zipPath = BuildDeliveryZipPath();
+            if (!rbDelExe.Checked) return zipPath;
+            return Path.ChangeExtension(zipPath, ".exe");
+        }
+
+        string BuildDeliveryZipPath()
+        {
+            string name = string.IsNullOrWhiteSpace(txtDelName.Text) ? "delivery" : txtDelName.Text.Trim();
+            string safeName = string.Join("_", name.Split(Path.GetInvalidFileNameChars(), StringSplitOptions.RemoveEmptyEntries)).Trim();
+            if (string.IsNullOrWhiteSpace(safeName)) safeName = "delivery";
+            string dir = string.IsNullOrWhiteSpace(txtDelOutputDir.Text)
+                ? Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory)
+                : txtDelOutputDir.Text.Trim();
+            return Path.Combine(dir, $"{safeName}_SecureDelivery.zip");
+        }
+
+        string? GetDeliveryOutputDirFromSource(string sourcePath)
+        {
+            if (Directory.Exists(sourcePath))
+            {
+                try
+                {
+                    string fullDir = Path.GetFullPath(sourcePath);
+                    var parent = Directory.GetParent(fullDir);
+                    return parent?.FullName ?? fullDir;
+                }
+                catch
+                {
+                    return sourcePath;
+                }
+            }
+            if (File.Exists(sourcePath))
+                return Path.GetDirectoryName(sourcePath);
+            return null;
+        }
+
+        string? GetDeliverySuggestedNameFromSource(string sourcePath)
+        {
+            try
+            {
+                if (Directory.Exists(sourcePath))
+                {
+                    string fullDir = Path.GetFullPath(sourcePath);
+                    var di = new DirectoryInfo(fullDir);
+                    return string.IsNullOrWhiteSpace(di.Name) ? null : di.Name;
+                }
+                if (File.Exists(sourcePath))
+                {
+                    string fullPath = Path.GetFullPath(sourcePath);
+                    string name = Path.GetFileNameWithoutExtension(fullPath);
+                    return string.IsNullOrWhiteSpace(name) ? null : name;
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        void TryAutoSetDeliveryNameFromSource(string sourcePath)
+        {
+            string? suggested = GetDeliverySuggestedNameFromSource(sourcePath);
+            if (string.IsNullOrWhiteSpace(suggested)) return;
+
+            string current = txtDelName.Text?.Trim() ?? string.Empty;
+            bool isDefault = string.IsNullOrWhiteSpace(current) || string.Equals(current, "delivery", StringComparison.OrdinalIgnoreCase);
+            bool isPreviousAuto = !string.IsNullOrWhiteSpace(lastAutoDeliveryName)
+                && string.Equals(current, lastAutoDeliveryName, StringComparison.OrdinalIgnoreCase);
+            bool allowAuto = !delNameUserEdited || isDefault || isPreviousAuto;
+            if (!allowAuto) return;
+
+            suppressDelNameUserEditedTracking = true;
+            try { txtDelName.Text = suggested; }
+            finally { suppressDelNameUserEditedTracking = false; }
+            lastAutoDeliveryName = suggested;
+            delNameUserEdited = false;
+        }
+
+        void RefreshDeliverySummary()
+        {
+            string pw = txtDelPassword.Text ?? string.Empty;
+            int len = pw.Length;
+            bool hasUpper = pw.Any(char.IsUpper);
+            bool hasLower = pw.Any(char.IsLower);
+            bool hasDigit = pw.Any(char.IsDigit);
+            bool hasSymbol = pw.Any(ch => !char.IsLetterOrDigit(ch));
+            int classes = (hasUpper ? 1 : 0) + (hasLower ? 1 : 0) + (hasDigit ? 1 : 0) + (hasSymbol ? 1 : 0);
+            string strength;
+            Color strengthColor;
+            if (len == 0)
+            {
+                strength = "Required";
+                strengthColor = Theme.TextDim;
+            }
+            else if (len < 8)
+            {
+                strength = "Too short (min 8)";
+                strengthColor = Theme.Error;
+            }
+            else if (len >= 12 && classes >= 3)
+            {
+                strength = "Strong";
+                strengthColor = Theme.Accent;
+            }
+            else
+            {
+                strength = "Okay";
+                strengthColor = Theme.AccentDim;
+            }
+            lblDelPasswordStrength.Text = $"Password strength: {strength}";
+            lblDelPasswordStrength.ForeColor = strengthColor;
+
+            bool nameOk = !string.IsNullOrWhiteSpace(txtDelName.Text);
+            bool outOk = !string.IsNullOrWhiteSpace(txtDelOutputDir.Text);
+            bool passwordOk = len >= 8;
+            bool confirmOk = string.Equals(txtDelPassword.Text, txtDelPasswordConfirm.Text, StringComparison.Ordinal);
+            bool sourcesOk = lstDelSources.Items.Count > 0;
+            bool formatOk = rbDelZip.Checked || rbDelExe.Checked;
+            btnDelCreate.Enabled = nameOk && outOk && passwordOk && confirmOk && sourcesOk && formatOk;
+
+            string validationHint = string.Empty;
+            if (!sourcesOk)
+                validationHint = "Add at least one source item.";
+            else if (!nameOk)
+                validationHint = "Enter a package name.";
+            else if (!outOk)
+                validationHint = "Select an output folder.";
+            else if (!passwordOk)
+                validationHint = "Password must be at least 8 characters.";
+            else if (!confirmOk && (!string.IsNullOrWhiteSpace(txtDelPassword.Text) || !string.IsNullOrWhiteSpace(txtDelPasswordConfirm.Text)))
+                validationHint = "Passwords do not match.";
+            else if (!formatOk)
+                validationHint = "Select output format.";
+
+            lblDelSummary.ForeColor = string.IsNullOrWhiteSpace(validationHint) ? Theme.TextDim : Theme.Error;
+            lblDelSummary.Text = string.IsNullOrWhiteSpace(validationHint)
+                ? $"{lstDelSources.Items.Count} source item(s)  |  Ready"
+                : $"{lstDelSources.Items.Count} source item(s)  |  {validationHint}";
+            lblDelOutputPreview.Text = BuildDeliveryPackagePath();
+            txtDelPackagePath.Text = BuildDeliveryPackagePath();
+            txtDelInstructions.Enabled = chkDelIncludeInstructions.Checked;
+        }
+
+        async Task<(int ExitCode, string Stdout, string Stderr)> RunDeliveryCliAsync(string args, IEnumerable<string>? stdinLines = null)
+            => await RunVaultCliWithInputsAsync(args, stdinLines);
+
+        bool TryParseJsonMessage(string json, out string message, out string? outputPath)
+        {
+            message = string.Empty;
+            outputPath = null;
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                var root = doc.RootElement;
+                if (root.TryGetProperty("error", out var err) && err.TryGetProperty("message", out var msg))
+                    message = msg.GetString() ?? string.Empty;
+                if (root.TryGetProperty("data", out var data) && data.TryGetProperty("output_path", out var op))
+                    outputPath = op.GetString();
+                if (string.IsNullOrWhiteSpace(message) && root.TryGetProperty("ok", out var ok) && ok.GetBoolean())
+                    message = "Operation completed successfully.";
+                return true;
+            }
+            catch { return false; }
+        }
+
+        bool TryBuildZipWithSingleExeEntrypoint(string packagePath, bool includeStartHere, string? customInstructions, out string error)
+        {
+            error = string.Empty;
+            try
+            {
+                if (string.IsNullOrWhiteSpace(packagePath) || !File.Exists(packagePath))
+                {
+                    error = "Package output not found.";
+                    return false;
+                }
+                string tempRoot = Path.Combine(Path.GetTempPath(), $"obsq_delivery_zip_wrap_{Guid.NewGuid():N}");
+                Directory.CreateDirectory(tempRoot);
+                string tempExePath = Path.Combine(tempRoot, "Click_Here_to_Decrypt.exe");
+                string tempZipPath = Path.Combine(tempRoot, Path.GetFileName(packagePath));
+
+                if (!TryBuildSingleExeFromPackage(packagePath, tempExePath, includeStartHere, out var exeErr))
+                {
+                    error = exeErr;
+                    return false;
+                }
+
+                const string startHereText =
+                    "ObsidianQ Self-Extracting Package\r\n\r\n" +
+                    "1) Extract all files from this ZIP.\r\n" +
+                    "2) Run Click_Here_to_Decrypt.exe.\r\n" +
+                    "3) Enter your password when prompted.\r\n" +
+                    "4) Choose where to extract your files.\r\n";
+
+                using (var zip = ZipFile.Open(tempZipPath, ZipArchiveMode.Create))
+                {
+                    zip.CreateEntryFromFile(tempExePath, "Click_Here_to_Decrypt.exe", CompressionLevel.Optimal);
+                    if (!string.IsNullOrWhiteSpace(customInstructions))
+                    {
+                        var customEntry = zip.CreateEntry("INSTRUCTIONS.txt", CompressionLevel.Optimal);
+                        using var sw = new StreamWriter(customEntry.Open(), new UTF8Encoding(false));
+                        sw.Write(customInstructions);
+                    }
+                    else if (includeStartHere)
+                    {
+                        var infoEntry = zip.CreateEntry("START_HERE.txt", CompressionLevel.Optimal);
+                        using var sw = new StreamWriter(infoEntry.Open(), new UTF8Encoding(false));
+                        sw.Write(startHereText);
+                    }
+                }
+
+                try { File.Delete(packagePath); } catch { }
+                File.Move(tempZipPath, packagePath, overwrite: true);
+                try { Directory.Delete(tempRoot, recursive: true); } catch { }
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return false;
+            }
+        }
+
+        bool TryBuildSingleExeFromPackage(string packageZipPath, string outputExePath, bool includeStartHere, out string error)
+        {
+            error = string.Empty;
+            if (!File.Exists(packageZipPath))
+            {
+                error = "Package ZIP not found for EXE conversion.";
+                return false;
+            }
+
+            if (!File.Exists(ExePath))
+            {
+                error = "obsidianq.exe not found; cannot build single EXE package.";
+                return false;
+            }
+
+            if (!File.Exists(ExtractorStubPath))
+            {
+                error = $"Single EXE bootstrapper not found at: {ExtractorStubPath}";
+                return false;
+            }
+
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(outputExePath) ?? Environment.CurrentDirectory);
+                if (File.Exists(outputExePath)) File.Delete(outputExePath);
+                File.Copy(ExtractorStubPath, outputExePath, overwrite: true);
+
+                byte[] packageBytes = File.ReadAllBytes(packageZipPath);
+                byte[] cliBytes = File.ReadAllBytes(ExePath);
+                byte[] magic = Encoding.ASCII.GetBytes("OBSQSFX1");
+                if (magic.Length != 8) throw new InvalidOperationException("Invalid SFX magic length.");
+
+                using var fs = new FileStream(outputExePath, FileMode.Append, FileAccess.Write, FileShare.None);
+                fs.Write(packageBytes, 0, packageBytes.Length);
+                fs.Write(cliBytes, 0, cliBytes.Length);
+                fs.Write(BitConverter.GetBytes((long)packageBytes.Length), 0, 8);
+                fs.Write(BitConverter.GetBytes((long)cliBytes.Length), 0, 8);
+                fs.Write(magic, 0, magic.Length);
+                fs.Flush(true);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return false;
+            }
+        }
+
+        void AddDeliverySource(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path)) return;
+            if (!File.Exists(path) && !Directory.Exists(path)) return;
+            foreach (var item in lstDelSources.Items.Cast<string>())
+                if (string.Equals(item, path, StringComparison.OrdinalIgnoreCase))
+                    return;
+            lstDelSources.Items.Add(path);
+            RefreshDeliverySummary();
+        }
+
+        _openDeliveryWithSource = path =>
+        {
+            if (string.IsNullOrWhiteSpace(path)) return;
+            if (!File.Exists(path) && !Directory.Exists(path)) return;
+            _tabs.SelectedIndex = 4; // Self-Extracting Package
+            TryAutoSetDeliveryNameFromSource(path);
+            string? outputDir = GetDeliveryOutputDirFromSource(path);
+            if (!string.IsNullOrWhiteSpace(outputDir))
+                txtDelOutputDir.Text = outputDir!;
+            AddDeliverySource(path);
+            DelStatus("Added source from Explorer context menu.");
+        };
+
+        WireFileDrop(lstDelSources, files =>
+        {
+            TryAutoSetDeliveryNameFromSource(files[0]);
+            string? outputDir = GetDeliveryOutputDirFromSource(files[0]);
+            if (!string.IsNullOrWhiteSpace(outputDir))
+                txtDelOutputDir.Text = outputDir!;
+            foreach (var f in files) AddDeliverySource(f);
+            DelStatus("Added dropped source item(s).");
+        });
+
+        var btnDelAddFiles = new NeonButton { Text = "ADD FILES", Dock = DockStyle.Fill, Margin = new Padding(0, 2, 3, 2) };
+        var btnDelAddFolder = new NeonButton { Text = "ADD FOLDER", Dock = DockStyle.Fill, Margin = new Padding(3, 2, 3, 2) };
+        var btnDelRemove = new NeonButton { Text = "REMOVE SELECTED", Dock = DockStyle.Fill, Margin = new Padding(3, 2, 3, 2) };
+        var btnDelClear = new NeonButton { Text = "CLEAR", Dock = DockStyle.Fill, Margin = new Padding(3, 2, 0, 2) };
+        btnDelAddFiles.Click += (_, _) =>
+        {
+            using var dlg = new OpenFileDialog { Title = "Select files", Filter = "All files|*.*", Multiselect = true };
+            if (dlg.ShowDialog(this) != DialogResult.OK) return;
+            TryAutoSetDeliveryNameFromSource(dlg.FileNames[0]);
+            string? outputDir = GetDeliveryOutputDirFromSource(dlg.FileNames[0]);
+            if (!string.IsNullOrWhiteSpace(outputDir))
+                txtDelOutputDir.Text = outputDir!;
+            foreach (var f in dlg.FileNames) AddDeliverySource(f);
+            DelStatus("Added source file(s).");
+        };
+        btnDelAddFolder.Click += (_, _) =>
+        {
+            using var dlg = new FolderBrowserDialog { Description = "Select source folder", UseDescriptionForTitle = true, ShowNewFolderButton = true };
+            if (dlg.ShowDialog(this) != DialogResult.OK) return;
+            TryAutoSetDeliveryNameFromSource(dlg.SelectedPath);
+            string? outputDir = GetDeliveryOutputDirFromSource(dlg.SelectedPath);
+            if (!string.IsNullOrWhiteSpace(outputDir))
+                txtDelOutputDir.Text = outputDir!;
+            AddDeliverySource(dlg.SelectedPath);
+            DelStatus("Added source folder.");
+        };
+        btnDelRemove.Click += (_, _) =>
+        {
+            var selected = lstDelSources.SelectedItems.Cast<object>().ToList();
+            foreach (var item in selected) lstDelSources.Items.Remove(item);
+            RefreshDeliverySummary();
+        };
+        btnDelClear.Click += (_, _) => { lstDelSources.Items.Clear(); RefreshDeliverySummary(); };
+
+        var btnDelBrowseOutDir = new NeonButton { Text = "BROWSE", Dock = DockStyle.Fill, Margin = new Padding(3, 2, 0, 2) };
+        int delOutBrowseHeight = Math.Max(22, txtDelOutputDir.PreferredHeight);
+        btnDelBrowseOutDir.MinimumSize = new Size(0, delOutBrowseHeight);
+        btnDelBrowseOutDir.MaximumSize = new Size(int.MaxValue, delOutBrowseHeight);
+        btnDelBrowseOutDir.Font = Theme.SafeMono(8.5f);
+        btnDelBrowseOutDir.Click += (_, _) =>
+        {
+            using var dlg = new FolderBrowserDialog { Description = "Select package output folder", UseDescriptionForTitle = true, ShowNewFolderButton = true };
+            if (dlg.ShowDialog(this) != DialogResult.OK) return;
+            txtDelOutputDir.Text = dlg.SelectedPath;
+            RefreshDeliverySummary();
+        };
+        btnDelCreate = new NeonButton { Text = "CREATE PACKAGE", Dock = DockStyle.Fill, Margin = new Padding(0, 2, 3, 2) };
+        var btnDelOpenOut = new NeonButton { Text = "OPEN OUTPUT FOLDER", Dock = DockStyle.Fill, Margin = new Padding(0, 2, 0, 2) };
+        var btnDelViewDetails = new NeonButton { Text = "VIEW DETAILS", Dock = DockStyle.Fill, Margin = new Padding(3, 2, 0, 2) };
+        btnDelOpenOut.Click += (_, _) =>
+        {
+            string dir = string.IsNullOrWhiteSpace(txtDelOutputDir.Text) ? Environment.CurrentDirectory : txtDelOutputDir.Text;
+            try { Process.Start(new ProcessStartInfo("explorer.exe", $"\"{dir}\"") { UseShellExecute = true }); } catch { }
+        };
+        btnDelViewDetails.Click += (_, _) =>
+        {
+            using var dlg = new Form
+            {
+                Text = "Self-Extracting Package Details",
+                StartPosition = FormStartPosition.CenterParent,
+                FormBorderStyle = FormBorderStyle.Sizable,
+                MinimizeBox = false,
+                MaximizeBox = true,
+                ShowInTaskbar = false,
+                ClientSize = new Size(860, 520),
+                MinimumSize = new Size(700, 420),
+                BackColor = Theme.Bg,
+                ForeColor = Theme.TextMain,
+                Font = Theme.SafeMono(9f),
+            };
+            var body = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Padding = new Padding(12), BackColor = Theme.Bg };
+            body.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            body.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+            var txt = MakeTextBox();
+            txt.Multiline = true;
+            txt.ScrollBars = ScrollBars.Both;
+            txt.ReadOnly = true;
+            txt.WordWrap = false;
+            txt.Dock = DockStyle.Fill;
+            txt.BackColor = Theme.LogBg;
+            txt.ForeColor = Theme.Accent;
+            txt.Font = Theme.SafeMono(8.5f);
+            txt.Text = delDetailsLogSb.Length == 0 ? "No details captured yet." : delDetailsLogSb.ToString();
+            txt.SelectionStart = txt.TextLength;
+            txt.ScrollToCaret();
+            var btns = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = Theme.Bg };
+            btns.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+            btns.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+            var btnCopy = new NeonButton { Text = "COPY", Dock = DockStyle.Fill, Margin = new Padding(0, 0, 4, 0) };
+            var btnClose = new NeonButton { Text = "CLOSE", Dock = DockStyle.Fill, Margin = new Padding(4, 0, 0, 0) };
+            btnCopy.Click += (_, _) => { try { Clipboard.SetText(txt.Text ?? string.Empty); } catch { } };
+            btnClose.Click += (_, _) => dlg.Close();
+            btns.Controls.Add(btnCopy, 0, 0);
+            btns.Controls.Add(btnClose, 1, 0);
+            body.Controls.Add(txt, 0, 0);
+            body.Controls.Add(btns, 0, 1);
+            dlg.Controls.Add(body);
+            dlg.ShowDialog(this);
+        };
+
+        btnDelCreate.Click += async (_, _) =>
+        {
+            if (!File.Exists(ExePath)) { DelStatus("obsidianq.exe not found.", true); return; }
+            if (lstDelSources.Items.Count == 0) { DelStatus("Add at least one source file/folder.", true); return; }
+            if (string.IsNullOrWhiteSpace(txtDelPassword.Text)) { DelStatus("Enter package password.", true); return; }
+            if (txtDelPassword.Text.Length < 8) { DelStatus("Password too short. Minimum length is 8 characters.", true); return; }
+            if (!string.Equals(txtDelPassword.Text, txtDelPasswordConfirm.Text, StringComparison.Ordinal))
+            {
+                DelStatus("Password confirmation does not match.", true);
+                return;
+            }
+            Directory.CreateDirectory(txtDelOutputDir.Text);
+
+            var argsSb = new StringBuilder();
+            argsSb.Append("delivery create --json --password-stdin --format zip ");
+            argsSb.Append($"--output \"{txtDelOutputDir.Text}\" ");
+            argsSb.Append($"--name \"{txtDelName.Text}\" ");
+            if (chkDelCompress.Checked) argsSb.Append("--compress ");
+            string? tempInstructions = null;
+            if (chkDelIncludeInstructions.Checked)
+            {
+                argsSb.Append("--include-instructions ");
+                tempInstructions = Path.Combine(Path.GetTempPath(), $"obsq_delivery_instructions_{Guid.NewGuid():N}.txt");
+                File.WriteAllText(tempInstructions, txtDelInstructions.Text ?? string.Empty);
+                argsSb.Append($"--instructions-file \"{tempInstructions}\" ");
+            }
+            argsSb.Append("--overwrite ");
+            foreach (string src in lstDelSources.Items.Cast<string>())
+                argsSb.Append($"\"{src}\" ");
+
+            setDeliveryProgressVisibility(true);
+            delProgress.Style = ProgressBarStyle.Marquee;
+            delProgress.MarqueeAnimationSpeed = 20;
+            btnDelCreate.Enabled = false;
+            try
+            {
+                DelLog($"[CMD] obsidianq {argsSb}", Theme.TextDim);
+                var (code, stdout, stderr) = await RunWithBusyDialogAsync(
+                    "Self-Extracting Package",
+                    "Creating self-extracting package...",
+                    () => RunDeliveryCliAsync(argsSb.ToString(), [txtDelPassword.Text]));
+                if (!string.IsNullOrWhiteSpace(stderr)) DelLog(stderr.TrimEnd(), Theme.Error);
+                if (!string.IsNullOrWhiteSpace(stdout)) DelLog(stdout.TrimEnd(), Theme.AccentDim);
+
+                bool parsed = TryParseJsonMessage(stdout, out var msg, out var outputPath);
+                if (code == 0)
+                {
+                    if (!string.IsNullOrWhiteSpace(outputPath))
+                        txtDelPackagePath.Text = outputPath!;
+                    string finalZipPath = !string.IsNullOrWhiteSpace(outputPath) ? outputPath! : BuildDeliveryZipPath();
+                    bool includeStartHere = !chkDelIncludeInstructions.Checked;
+                    if (rbDelZip.Checked)
+                    {
+                        string? customZipInstructions = chkDelIncludeInstructions.Checked ? (txtDelInstructions.Text ?? string.Empty) : null;
+                        if (TryBuildZipWithSingleExeEntrypoint(finalZipPath, includeStartHere, customZipInstructions, out var embedErr))
+                        {
+                            DelLog("[OK] Built ZIP package with single EXE entrypoint.", Theme.AccentDim);
+                            DelStatus(string.IsNullOrWhiteSpace(msg) ? "ZIP package created with single EXE entrypoint." : $"{msg} ZIP package includes one EXE entrypoint.");
+                        }
+                        else
+                        {
+                            DelLog($"[ERR] Failed to build ZIP with EXE entrypoint: {embedErr}", Theme.Error);
+                            DelStatus(string.IsNullOrWhiteSpace(msg) ? "Package created (ZIP entrypoint wrap failed)." : $"{msg} ZIP entrypoint wrap failed.", error: true);
+                        }
+                    }
+                    else
+                    {
+                        string finalExePath = BuildDeliveryPackagePath();
+                        if (TryBuildSingleExeFromPackage(finalZipPath, finalExePath, includeStartHere, out var exeErr))
+                        {
+                            try { File.Delete(finalZipPath); } catch { }
+                            txtDelPackagePath.Text = finalExePath;
+                            DelStatus(string.IsNullOrWhiteSpace(msg) ? "Single EXE package created." : $"{msg} Single EXE package created.");
+                        }
+                        else
+                        {
+                            DelLog($"[ERR] Failed to build single EXE package: {exeErr}", Theme.Error);
+                            string? customZipInstructions = chkDelIncludeInstructions.Checked ? (txtDelInstructions.Text ?? string.Empty) : null;
+                            if (TryBuildZipWithSingleExeEntrypoint(finalZipPath, includeStartHere, customZipInstructions, out var zipFallbackErr))
+                            {
+                                txtDelPackagePath.Text = finalZipPath;
+                                DelLog("[OK] Fallback: created ZIP package with single EXE entrypoint.", Theme.AccentDim);
+                                DelStatus(string.IsNullOrWhiteSpace(msg)
+                                    ? "EXE conversion failed; fallback ZIP package created."
+                                    : $"{msg} EXE conversion failed; fallback ZIP package created.",
+                                    error: true);
+                            }
+                            else
+                            {
+                                DelLog($"[ERR] ZIP fallback also failed: {zipFallbackErr}", Theme.Error);
+                                DelStatus(string.IsNullOrWhiteSpace(msg)
+                                    ? "Package created, but EXE conversion failed."
+                                    : $"{msg} EXE conversion failed.",
+                                    error: true);
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    string detail = parsed && !string.IsNullOrWhiteSpace(msg)
+                        ? msg
+                        : $"Create failed (exit {code}).";
+                    DelStatus(detail, error: true);
+                }
+            }
+            finally
+            {
+                if (!string.IsNullOrWhiteSpace(tempInstructions))
+                {
+                    try { File.Delete(tempInstructions); } catch { }
+                }
+                delProgress.Style = ProgressBarStyle.Continuous;
+                delProgress.Value = 0;
+                delProgress.MarqueeAnimationSpeed = 0;
+                setDeliveryProgressVisibility(false);
+                RefreshDeliverySummary();
+            }
+        };
+
+        txtDelName.TextChanged += (_, _) =>
+        {
+            if (!suppressDelNameUserEditedTracking)
+                delNameUserEdited = true;
+            RefreshDeliverySummary();
+        };
+        txtDelOutputDir.TextChanged += (_, _) => RefreshDeliverySummary();
+        txtDelPassword.TextChanged += (_, _) => RefreshDeliverySummary();
+        txtDelPasswordConfirm.TextChanged += (_, _) => RefreshDeliverySummary();
+        chkDelIncludeInstructions.CheckedChanged += (_, _) => RefreshDeliverySummary();
+        rbDelZip.CheckedChanged += (_, _) => RefreshDeliverySummary();
+        rbDelExe.CheckedChanged += (_, _) => RefreshDeliverySummary();
+        chkDelCompress.CheckedChanged += (_, _) => RefreshDeliverySummary();
+        RefreshDeliverySummary();
+
+        var delAccess = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 1, BackColor = Theme.Bg, Margin = new Padding(0) };
+        delAccess.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
+        delAccess.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        delAccess.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
+        delAccess.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        delAccess.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        delAccess.Controls.Add(MakeLabel("PASSWORD", 8.5f, true), 0, 0);
+        delAccess.Controls.Add(txtDelPassword, 1, 0);
+        delAccess.Controls.Add(MakeLabel("CONFIRM", 8.5f, true), 2, 0);
+        delAccess.Controls.Add(txtDelPasswordConfirm, 3, 0);
+
+        var delSourcesButtons = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 1, BackColor = Theme.Bg, Margin = new Padding(0) };
+        delSourcesButtons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
+        delSourcesButtons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
+        delSourcesButtons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
+        delSourcesButtons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
+        delSourcesButtons.Controls.Add(btnDelAddFiles, 0, 0);
+        delSourcesButtons.Controls.Add(btnDelAddFolder, 1, 0);
+        delSourcesButtons.Controls.Add(btnDelRemove, 2, 0);
+        delSourcesButtons.Controls.Add(btnDelClear, 3, 0);
+
+        var delOutRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = Theme.Bg, Margin = new Padding(0) };
+        delOutRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        delOutRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 92));
+        delOutRow.Controls.Add(txtDelOutputDir, 0, 0);
+        delOutRow.Controls.Add(btnDelBrowseOutDir, 1, 0);
+        var delOutputHost = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = Theme.Bg, Margin = new Padding(0) };
+        delOutputHost.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
+        delOutputHost.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        delOutputHost.Controls.Add(MakeLabel("OUTPUT FOLDER", 8.5f, true), 0, 0);
+        delOutputHost.Controls.Add(delOutRow, 1, 0);
+
+        var delOptionsCompact = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 6, BackColor = Theme.Bg, Margin = new Padding(0), Padding = new Padding(0) };
+        delOptionsCompact.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
+        delOptionsCompact.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
+        delOptionsCompact.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
+        delOptionsCompact.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
+        delOptionsCompact.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
+        delOptionsCompact.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
+        var delNameRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = Theme.Bg, Margin = new Padding(0) };
+        delNameRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
+        delNameRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        delNameRow.Controls.Add(MakeLabel("PACKAGE NAME", 8.5f, true), 0, 0);
+        delNameRow.Controls.Add(txtDelName, 1, 0);
+        delOptionsCompact.Controls.Add(delNameRow, 0, 0);
+        delOptionsCompact.Controls.Add(rbDelZip, 0, 1);
+        delOptionsCompact.Controls.Add(rbDelExe, 0, 2);
+        delOptionsCompact.Controls.Add(chkDelCompress, 0, 3);
+        delOptionsCompact.Controls.Add(chkDelIncludeInstructions, 0, 4);
+        var delFinalOutputHost = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = Theme.Bg, Margin = new Padding(0) };
+        delFinalOutputHost.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
+        delFinalOutputHost.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        delFinalOutputHost.Controls.Add(MakeLabel("FINAL OUTPUT", 8.5f, true), 0, 0);
+        delFinalOutputHost.Controls.Add(lblDelOutputPreview, 1, 0);
+
+        var delActions = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1, BackColor = Theme.Bg, Margin = new Padding(0) };
+        delActions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 34));
+        delActions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33));
+        delActions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33));
+        delActions.Controls.Add(btnDelCreate, 0, 0);
+        delActions.Controls.Add(btnDelOpenOut, 1, 0);
+        delActions.Controls.Add(btnDelViewDetails, 2, 0);
+
+        var delLogContainer = new Panel { Dock = DockStyle.Fill, BackColor = Theme.LogBg };
+        delLogContainer.Controls.Add(lblDelActivity);
+        delLogContainer.Paint += (_, pe) =>
+        {
+            using var pen = new Pen(Theme.Border, 1f);
+            pe.Graphics.DrawRectangle(pen, 0, 0, delLogContainer.Width - 1, delLogContainer.Height - 1);
+        };
+
+        var outerDelivery = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 12,
+            Padding = new Padding(16),
+            BackColor = Theme.Bg,
+        };
+        outerDelivery.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));
+        outerDelivery.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+        outerDelivery.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
+        outerDelivery.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+        outerDelivery.RowStyles.Add(new RowStyle(SizeType.Absolute, 120));
+        outerDelivery.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+        outerDelivery.RowStyles.Add(new RowStyle(SizeType.Absolute, 188));
+        outerDelivery.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
+        outerDelivery.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+        outerDelivery.RowStyles.Add(new RowStyle(SizeType.Absolute, 0));
+        outerDelivery.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        outerDelivery.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
+        outerDelivery.Controls.Add(MakeTabHeader(
+            "SELF-EXTRACTING PACKAGE",
+            "Create portable password-protected packages for recipients without ObsidianQ."), 0, 0);
+        outerDelivery.Controls.Add(delAccess, 0, 1);
+        var delSummaryRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = Theme.Bg, Margin = new Padding(0) };
+        delSummaryRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        delSummaryRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        delSummaryRow.Controls.Add(lblDelSummary, 0, 0);
+        delSummaryRow.Controls.Add(lblDelPasswordStrength, 1, 0);
+        outerDelivery.Controls.Add(delSummaryRow, 0, 2);
+        outerDelivery.Controls.Add(delSourcesButtons, 0, 3);
+        outerDelivery.Controls.Add(lstDelSources, 0, 4);
+        outerDelivery.Controls.Add(delOutputHost, 0, 5);
+        var delFormatHost = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 4, BackColor = Theme.Bg, Margin = new Padding(0) };
+        delFormatHost.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45));
+        delFormatHost.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55));
+        delFormatHost.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
+        delFormatHost.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        delFormatHost.RowStyles.Add(new RowStyle(SizeType.Absolute, 0));
+        delFormatHost.RowStyles.Add(new RowStyle(SizeType.Absolute, 0));
+        delFormatHost.Controls.Add(MakeLabel("OPTIONS", 8.5f, true), 0, 0);
+        delFormatHost.Controls.Add(MakeLabel("INSTRUCTIONS", 8.5f, true), 1, 0);
+        delFormatHost.Controls.Add(delOptionsCompact, 0, 1);
+        delFormatHost.Controls.Add(txtDelInstructions, 1, 1);
+        outerDelivery.Controls.Add(delFormatHost, 0, 6);
+        outerDelivery.Controls.Add(delFinalOutputHost, 0, 7);
+        outerDelivery.Controls.Add(delActions, 0, 8);
+        outerDelivery.Controls.Add(delProgress, 0, 9);
+        outerDelivery.Controls.Add(delLogContainer, 0, 10);
+        outerDelivery.Controls.Add(lblDelStatus, 0, 11);
+        setDeliveryProgressVisibility = visible =>
+        {
+            delProgress.Visible = visible;
+            outerDelivery.RowStyles[9].Height = visible ? 28f : 0f;
+            outerDelivery.PerformLayout();
+        };
+        setDeliveryProgressVisibility(false);
+
         // ==================================================================
         // ASSEMBLE TAB CONTROL
         // ==================================================================
@@ -5446,6 +6972,7 @@ class MainForm : Form
         var tabText  = new TabPage { Text = "TEXT",  BackColor = Theme.Bg, ForeColor = Theme.TextMain, Padding = new Padding(0), UseVisualStyleBackColor = false };
         var tabVault = new TabPage { Text = "VAULT", BackColor = Theme.Bg, ForeColor = Theme.TextMain, Padding = new Padding(0), UseVisualStyleBackColor = false };
         var tabInspect = new TabPage { Text = "INSPECT", BackColor = Theme.Bg, ForeColor = Theme.TextMain, Padding = new Padding(0), UseVisualStyleBackColor = false };
+        var tabDelivery = new TabPage { Text = "SELF-EXTRACTING PACKAGE", BackColor = Theme.Bg, ForeColor = Theme.TextMain, Padding = new Padding(0), UseVisualStyleBackColor = false };
         var tabExchange = new TabPage { Text = "FILE SEND / RECEIVE", BackColor = Theme.Bg, ForeColor = Theme.TextMain, Padding = new Padding(0), UseVisualStyleBackColor = false };
         var tabKeyExchange2 = new TabPage { Text = "SECURE CONTACTS", BackColor = Theme.Bg, ForeColor = Theme.TextMain, Padding = new Padding(0), UseVisualStyleBackColor = false };
         var tabSettings = new TabPage { Text = "SETTINGS", BackColor = Theme.Bg, ForeColor = Theme.TextMain, Padding = new Padding(0), UseVisualStyleBackColor = false };
@@ -5454,6 +6981,7 @@ class MainForm : Form
         tabText.Controls.Add(outerText);
         tabVault.Controls.Add(outerVault);
         tabInspect.Controls.Add(outerInspect);
+        tabDelivery.Controls.Add(outerDelivery);
         tabExchange.Controls.Add(outerExchange);
         tabKeyExchange2.Controls.Add(outerKx2);
         tabSettings.Controls.Add(outerSettings);
@@ -5461,7 +6989,7 @@ class MainForm : Form
 
         _tabs = new CyberpunkTabControl { Dock = DockStyle.Fill };
         // File Send / Receive is currently hidden (workflow sugar; core capability lives in File/Text tabs).
-        _tabs.TabPages.AddRange([tabFile, tabText, tabVault, tabInspect, tabKeyExchange2, tabSettings, tabAbout]);
+        _tabs.TabPages.AddRange([tabFile, tabText, tabVault, tabInspect, tabDelivery, tabKeyExchange2, tabSettings, tabAbout]);
         _tabs.SelectedIndexChanged += (_, _) =>
         {
             if (_tabs.SelectedIndex == 2) RefreshDriveLetter();
@@ -5500,7 +7028,7 @@ class MainForm : Form
         }
         catch { /* ignore in dev/test scenarios where icon isn't embedded */ }
 
-        HandleStartupIntent(preloadPath, createVaultOnStart, createVaultTarget, useDefaultAutoLoadWhenEmpty: true);
+        HandleStartupIntent(preloadPath, createVaultOnStart, createVaultTarget, createPackageOnStart, createPackageTarget, encryptFolderOnStart, encryptFolderTarget, useDefaultAutoLoadWhenEmpty: true);
 
         Paint += FormPaint;
 
@@ -5510,7 +7038,7 @@ class MainForm : Form
         Shown += (_, _) =>
         {
             PromptShellSetupIfNeeded();
-            if (preloadPath == null && !createVaultOnStart)
+            if (preloadPath == null && !createVaultOnStart && !createPackageOnStart && !encryptFolderOnStart)
                 PromptFirstRunKeypairSetupIfNeeded();
         };
         UpdateTextInputActionHints();
@@ -5519,11 +7047,18 @@ class MainForm : Form
         MigrateLegacyVaultNewEntry();
     }
 
-    public void HandleExternalLaunch(string? preloadPath, bool createVaultOnStart, string? createVaultTarget)
+    public void HandleExternalLaunch(
+        string? preloadPath,
+        bool createVaultOnStart,
+        string? createVaultTarget,
+        bool createPackageOnStart,
+        string? createPackageTarget,
+        bool encryptFolderOnStart,
+        string? encryptFolderTarget)
     {
         if (InvokeRequired)
         {
-            BeginInvoke(new Action(() => HandleExternalLaunch(preloadPath, createVaultOnStart, createVaultTarget)));
+            BeginInvoke(new Action(() => HandleExternalLaunch(preloadPath, createVaultOnStart, createVaultTarget, createPackageOnStart, createPackageTarget, encryptFolderOnStart, encryptFolderTarget)));
             return;
         }
 
@@ -5533,16 +7068,24 @@ class MainForm : Form
         Activate();
         BringToFront();
 
-        HandleStartupIntent(preloadPath, createVaultOnStart, createVaultTarget, useDefaultAutoLoadWhenEmpty: false);
+        HandleStartupIntent(preloadPath, createVaultOnStart, createVaultTarget, createPackageOnStart, createPackageTarget, encryptFolderOnStart, encryptFolderTarget, useDefaultAutoLoadWhenEmpty: false);
     }
 
-    private void HandleStartupIntent(string? preloadPath, bool createVaultOnStart, string? createVaultTarget, bool useDefaultAutoLoadWhenEmpty)
+    private void HandleStartupIntent(
+        string? preloadPath,
+        bool createVaultOnStart,
+        string? createVaultTarget,
+        bool createPackageOnStart,
+        string? createPackageTarget,
+        bool encryptFolderOnStart,
+        string? encryptFolderTarget,
+        bool useDefaultAutoLoadWhenEmpty)
     {
         if (!string.IsNullOrWhiteSpace(preloadPath))
         {
             if (preloadPath.EndsWith(".obsqpub", StringComparison.OrdinalIgnoreCase))
             {
-                _tabs.SelectedIndex = 4; // Secure Contacts
+                _tabs.SelectedIndex = 5; // Secure Contacts
                 RunWhenHandleReady(() =>
                 {
                     try
@@ -5570,6 +7113,45 @@ class MainForm : Form
         if (createVaultOnStart)
         {
             RunWhenHandleReady(() => StartCreateVaultWizardAsync(createVaultTarget));
+            return;
+        }
+
+        if (createPackageOnStart && !string.IsNullOrWhiteSpace(createPackageTarget))
+        {
+            _tabs.SelectedIndex = 4; // Self-Extracting Package
+            RunWhenHandleReady(() =>
+            {
+                try
+                {
+                    _openDeliveryWithSource?.Invoke(createPackageTarget);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(this, $"Unable to load source for package creation:\n{ex.Message}", "Self-Extracting Package", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+                return Task.CompletedTask;
+            });
+            return;
+        }
+
+        if (encryptFolderOnStart && !string.IsNullOrWhiteSpace(encryptFolderTarget))
+        {
+            RunWhenHandleReady(() =>
+            {
+                try
+                {
+                    string zipPath = CreateTempZipFromFolderForEncrypt(encryptFolderTarget);
+                    AutoPopulate(zipPath);
+                    string desiredOut = BuildEncryptedOutputPathForFolder(encryptFolderTarget);
+                    _lblOutPath.Text = desiredOut;
+                    _lblOutPath.ForeColor = Theme.Accent;
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(this, $"Unable to prepare folder for encryption:\n{ex.Message}", "File Encryption", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+                return Task.CompletedTask;
+            });
             return;
         }
 
@@ -5683,8 +7265,15 @@ class MainForm : Form
     private static bool HasShellMenuEntries()
     {
         using var keyAny = Registry.CurrentUser.OpenSubKey(@"Software\Classes\*\shell\ObsidianQEncryptDecrypt\command");
+        using var keyAnyPkg = Registry.CurrentUser.OpenSubKey(@"Software\Classes\*\shell\ObsidianQEncryptPackage\command");
+        using var keyDir = Registry.CurrentUser.OpenSubKey(@"Software\Classes\Directory\shell\ObsidianQEncryptFolder\command");
+        using var keyDirPkg = Registry.CurrentUser.OpenSubKey(@"Software\Classes\Directory\shell\ObsidianQEncryptPackage\command");
         using var keyObsq = Registry.CurrentUser.OpenSubKey(@"Software\Classes\obsq_auto_file\shell\ObsidianQDecrypt\command");
-        return keyAny?.GetValue(null) is string && keyObsq?.GetValue(null) is string;
+        return keyAny?.GetValue(null) is string
+            && keyAnyPkg?.GetValue(null) is string
+            && keyDir?.GetValue(null) is string
+            && keyDirPkg?.GetValue(null) is string
+            && keyObsq?.GetValue(null) is string;
     }
 
     private static bool HasVaultAssociation()
@@ -5765,15 +7354,42 @@ class MainForm : Form
         string launcherPath = Environment.ProcessPath ?? Application.ExecutablePath;
         string iconValue = $"\"{launcherPath}\",0";
         string commandValue = $"\"{launcherPath}\" \"%1\"";
+        string packageCommandValue = $"\"{launcherPath}\" --create-package \"%1\"";
+        string folderEncryptCommandValue = $"\"{launcherPath}\" --encrypt-folder \"%1\"";
 
         using (var key = Registry.CurrentUser.CreateSubKey(@"Software\Classes\*\shell\ObsidianQEncryptDecrypt", true))
         {
-            key?.SetValue(null, "ObsidianQ Encrypt/Decrypt...");
+            key?.SetValue(null, "ObsidianQ Encrypt File");
             key?.SetValue("Icon", iconValue);
             key?.SetValue("Position", "Bottom");
         }
         using (var key = Registry.CurrentUser.CreateSubKey(@"Software\Classes\*\shell\ObsidianQEncryptDecrypt\command", true))
             key?.SetValue(null, commandValue);
+        using (var key = Registry.CurrentUser.CreateSubKey(@"Software\Classes\*\shell\ObsidianQEncryptPackage", true))
+        {
+            key?.SetValue(null, "ObsidianQ Encrypt and make Package");
+            key?.SetValue("Icon", iconValue);
+            key?.SetValue("Position", "Bottom");
+        }
+        using (var key = Registry.CurrentUser.CreateSubKey(@"Software\Classes\*\shell\ObsidianQEncryptPackage\command", true))
+            key?.SetValue(null, packageCommandValue);
+
+        using (var key = Registry.CurrentUser.CreateSubKey(@"Software\Classes\Directory\shell\ObsidianQEncryptPackage", true))
+        {
+            key?.SetValue(null, "ObsidianQ Encrypt Folder and make Package");
+            key?.SetValue("Icon", iconValue);
+            key?.SetValue("Position", "Bottom");
+        }
+        using (var key = Registry.CurrentUser.CreateSubKey(@"Software\Classes\Directory\shell\ObsidianQEncryptPackage\command", true))
+            key?.SetValue(null, packageCommandValue);
+        using (var key = Registry.CurrentUser.CreateSubKey(@"Software\Classes\Directory\shell\ObsidianQEncryptFolder", true))
+        {
+            key?.SetValue(null, "ObsidianQ Encrypt Folder");
+            key?.SetValue("Icon", iconValue);
+            key?.SetValue("Position", "Bottom");
+        }
+        using (var key = Registry.CurrentUser.CreateSubKey(@"Software\Classes\Directory\shell\ObsidianQEncryptFolder\command", true))
+            key?.SetValue(null, folderEncryptCommandValue);
 
         using (var key = Registry.CurrentUser.CreateSubKey(@"Software\Classes\.obsq", true))
             key?.SetValue(null, "obsq_auto_file");
@@ -5847,6 +7463,9 @@ class MainForm : Form
         }
 
         DeleteKeyTree(@"Software\Classes\*\shell\ObsidianQEncryptDecrypt");
+        DeleteKeyTree(@"Software\Classes\*\shell\ObsidianQEncryptPackage");
+        DeleteKeyTree(@"Software\Classes\Directory\shell\ObsidianQEncryptFolder");
+        DeleteKeyTree(@"Software\Classes\Directory\shell\ObsidianQEncryptPackage");
         DeleteKeyTree(@"Software\Classes\obsq_auto_file");
         DeleteKeyTree(@"Software\Classes\obsidianq_vault_file");
         DeleteKeyTree(@"Software\Classes\obsidianq_identity_file");
@@ -5871,6 +7490,39 @@ class MainForm : Form
             Font = bold ? Theme.SafeMono(size) : Theme.SafeMono(size),
             ForeColor = Theme.TextDim, BackColor = Color.Transparent,
         };
+    }
+
+    private static TableLayoutPanel MakeTabHeader(string title, string subtitle)
+    {
+        var titleLabel = MakeLabel(title, 10f, bold: true);
+        titleLabel.ForeColor = Theme.Accent;
+        titleLabel.Dock = DockStyle.Fill;
+        titleLabel.TextAlign = ContentAlignment.MiddleLeft;
+        titleLabel.Margin = new Padding(0, 0, 0, 0);
+        titleLabel.AutoSize = false;
+
+        var subtitleLabel = MakeLabel(subtitle, 8.5f);
+        subtitleLabel.ForeColor = Theme.TextDim;
+        subtitleLabel.Dock = DockStyle.Fill;
+        subtitleLabel.TextAlign = ContentAlignment.MiddleLeft;
+        subtitleLabel.Margin = new Padding(0, 0, 0, 0);
+        subtitleLabel.AutoSize = false;
+
+        var header = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 2,
+            BackColor = Theme.Bg,
+            Margin = new Padding(0, 0, 0, 0),
+            Padding = new Padding(0, 0, 0, 4),
+        };
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        header.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
+        header.RowStyles.Add(new RowStyle(SizeType.Absolute, 20));
+        header.Controls.Add(titleLabel, 0, 0);
+        header.Controls.Add(subtitleLabel, 0, 1);
+        return header;
     }
 
     private static TextBox MakeTextBox(bool password = false)
@@ -6275,6 +7927,40 @@ class MainForm : Form
         TryAutoLoadDefaultKeyPath(force: true);
         if (path.EndsWith(".obsq", StringComparison.OrdinalIgnoreCase))
             RunWhenHandleReady(() => TryAutoPrepareFileDecryptOnOpenAsync(path));
+    }
+
+    private static string CreateTempZipFromFolderForEncrypt(string folderPath)
+    {
+        if (string.IsNullOrWhiteSpace(folderPath) || !Directory.Exists(folderPath))
+            throw new DirectoryNotFoundException("Folder not found.");
+
+        string folderName = Path.GetFileName(Path.GetFullPath(folderPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        if (string.IsNullOrWhiteSpace(folderName)) folderName = "folder";
+        string safeName = string.Concat(folderName.Select(ch => Path.GetInvalidFileNameChars().Contains(ch) ? '_' : ch));
+        if (string.IsNullOrWhiteSpace(safeName)) safeName = "folder";
+
+        string staging = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "ObsidianQ",
+            "shell_staging");
+        Directory.CreateDirectory(staging);
+
+        string zipPath = Path.Combine(staging, $"{safeName}_{DateTime.Now:yyyyMMdd_HHmmss}.zip");
+        ZipFile.CreateFromDirectory(folderPath, zipPath, CompressionLevel.Optimal, includeBaseDirectory: true);
+        return zipPath;
+    }
+
+    private static string BuildEncryptedOutputPathForFolder(string folderPath)
+    {
+        string fullFolder = Path.GetFullPath(folderPath)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        string? parent = Path.GetDirectoryName(fullFolder);
+        string folderName = Path.GetFileName(fullFolder);
+        if (string.IsNullOrWhiteSpace(folderName)) folderName = "folder";
+        string safeName = string.Concat(folderName.Select(ch => Path.GetInvalidFileNameChars().Contains(ch) ? '_' : ch));
+        if (string.IsNullOrWhiteSpace(safeName)) safeName = "folder";
+        string baseDir = string.IsNullOrWhiteSpace(parent) ? Environment.CurrentDirectory : parent;
+        return Path.Combine(baseDir, $"{safeName}.obsq");
     }
 
     private void AutoPopulateVault(string path)
@@ -7356,7 +9042,7 @@ class MainForm : Form
         _pqcPanelText.Visible =  isPqc;
 
         if (_toggleText.Parent is TableLayoutPanel outerText)
-            outerText.RowStyles[1] = new RowStyle(SizeType.Absolute, isPqc ? 26 : 44);
+            outerText.RowStyles[2] = new RowStyle(SizeType.Absolute, isPqc ? 26 : 44);
 
         if (isPqc) TryAutoLoadTextKeyPath(force: false);
         UpdateTextInputActionHints();
@@ -7606,7 +9292,7 @@ class MainForm : Form
         _pqcPanelVault.Visible =  isPqc;
 
         if (_toggleVault.Parent is TableLayoutPanel outerVault)
-            outerVault.RowStyles[3] = new RowStyle(SizeType.Absolute, isPqc ? 26 : 44);
+            outerVault.RowStyles[4] = new RowStyle(SizeType.Absolute, isPqc ? 26 : 44);
 
         if (isPqc) TryAutoLoadVaultKeyPath(force: false);
     }
@@ -9675,7 +11361,126 @@ class MainForm : Form
         candidate = Path.Combine(repoRoot, "target", "debug", "obsidianq.exe");
         if (File.Exists(candidate)) return candidate;
 
+        string? embedded = TryExtractEmbeddedCli();
+        if (!string.IsNullOrWhiteSpace(embedded) && File.Exists(embedded))
+            return embedded;
+
         return Path.Combine(self, "obsidianq.exe");
+    }
+
+    private static string ResolveExtractorStubPath()
+    {
+        string? native = TryExtractEmbeddedNativeBootstrapper();
+        if (!string.IsNullOrWhiteSpace(native) && File.Exists(native))
+            return native;
+
+        string? embedded = TryExtractEmbeddedExtractorStub();
+        if (!string.IsNullOrWhiteSpace(embedded) && File.Exists(embedded))
+            return embedded;
+
+        string self = AppContext.BaseDirectory;
+        string nativeCandidate = Path.Combine(self, "ObsidianQ.Bootstrapper.exe");
+        if (File.Exists(nativeCandidate)) return nativeCandidate;
+
+        string candidate = Path.Combine(self, "ObsidianQ.Extractor.exe");
+        if (File.Exists(candidate)) return candidate;
+
+        string repoRoot = Path.GetFullPath(Path.Combine(self, "..", ".."));
+        string[] candidates =
+        [
+            Path.Combine(repoRoot, "target", "release", "obsidianq-bootstrapper.exe"),
+            Path.Combine(repoRoot, "target", "debug", "obsidianq-bootstrapper.exe"),
+            Path.Combine(repoRoot, "tools", "windows-extractor", "bin", "Debug", "net8.0-windows", "win-x64", "ObsidianQ.Extractor.exe"),
+            Path.Combine(repoRoot, "tools", "windows-extractor", "bin", "Release", "net8.0-windows", "win-x64", "ObsidianQ.Extractor.exe"),
+            Path.Combine(repoRoot, "tools", "windows-extractor", "bin", "Debug", "net8.0-windows", "ObsidianQ.Extractor.exe"),
+            Path.Combine(repoRoot, "tools", "windows-extractor", "bin", "Release", "net8.0-windows", "ObsidianQ.Extractor.exe"),
+        ];
+        foreach (var c in candidates)
+            if (File.Exists(c)) return c;
+
+        return candidate;
+    }
+
+    private static string? TryExtractEmbeddedNativeBootstrapper()
+    {
+        const string resourceName = "ObsidianQ.Launcher.Embedded.ObsidianQ.Bootstrapper.exe";
+        try
+        {
+            var asm = Assembly.GetExecutingAssembly();
+            using var stream = asm.GetManifestResourceStream(resourceName);
+            if (stream == null) return null;
+
+            using var ms = new MemoryStream();
+            stream.CopyTo(ms);
+            byte[] bytes = ms.ToArray();
+            return WriteEmbeddedBinaryWithHash("ObsidianQ.Bootstrapper.embedded", bytes);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? TryExtractEmbeddedExtractorStub()
+    {
+        const string resourceName = "ObsidianQ.Launcher.Embedded.ObsidianQ.Extractor.exe";
+        try
+        {
+            var asm = Assembly.GetExecutingAssembly();
+            using var stream = asm.GetManifestResourceStream(resourceName);
+            if (stream == null) return null;
+
+            using var ms = new MemoryStream();
+            stream.CopyTo(ms);
+            byte[] bytes = ms.ToArray();
+            return WriteEmbeddedBinaryWithHash("ObsidianQ.Extractor.embedded", bytes);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? TryExtractEmbeddedCli()
+    {
+        const string resourceName = "ObsidianQ.Launcher.Embedded.obsidianq.exe";
+        try
+        {
+            var asm = Assembly.GetExecutingAssembly();
+            using var stream = asm.GetManifestResourceStream(resourceName);
+            if (stream == null) return null;
+
+            using var ms = new MemoryStream();
+            stream.CopyTo(ms);
+            byte[] bytes = ms.ToArray();
+            return WriteEmbeddedBinaryWithHash("obsidianq.embedded", bytes);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string WriteEmbeddedBinaryWithHash(string logicalBaseName, byte[] bytes)
+    {
+        string cacheDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "ObsidianQ",
+            "embedded");
+        Directory.CreateDirectory(cacheDir);
+
+        string hashHex;
+        using (var sha = SHA256.Create())
+        {
+            byte[] hash = sha.ComputeHash(bytes);
+            hashHex = Convert.ToHexString(hash).ToLowerInvariant()[..12];
+        }
+
+        string outPath = Path.Combine(cacheDir, $"{logicalBaseName}.{hashHex}.exe");
+        if (!File.Exists(outPath))
+            File.WriteAllBytes(outPath, bytes);
+
+        return outPath;
     }
 
     // -----------------------------------------------------------------------

@@ -23,6 +23,7 @@ thiserror.workspace        = true
 hex.workspace              = true
 base64ct.workspace         = true
 tracing.workspace          = true
+serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 criterion.workspace = true

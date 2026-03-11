@@ -1,9 +1,11 @@
 use std::path::{Path, PathBuf};
+use std::process;
 
 use anyhow::{bail, Context, Result};
 use base64ct::{Base64, Encoding};
 use clap::{Args, Subcommand};
 use rand::RngCore;
+use serde::Serialize;
 
 use obsidianq_core::{
     crypto::{
@@ -13,6 +15,7 @@ use obsidianq_core::{
     format::SuiteId,
 };
 
+use super::json_output::{print_json_error, print_json_success};
 use super::{read_priv, read_pub};
 
 const PACKET_MAGIC: &[u8; 8] = b"OBSQX1\0\0";
@@ -22,6 +25,10 @@ const EXCHANGE_AAD_PREFIX: &[u8] = b"obsidianq-exchange-v1-data";
 
 #[derive(Args)]
 pub struct ExchangeArgs {
+    /// Emit machine-readable JSON response
+    #[arg(long)]
+    pub json: bool,
+
     #[command(subcommand)]
     pub cmd: ExchangeCmd,
 }
@@ -85,15 +92,85 @@ pub struct FingerprintArgs {
 }
 
 pub fn run(args: ExchangeArgs) -> Result<()> {
+    let json = args.json;
+    if json {
+        return run_json(args);
+    }
     match args.cmd {
-        ExchangeCmd::Send(a) => run_send(a),
-        ExchangeCmd::Recv(a) => run_recv(a),
-        ExchangeCmd::Inspect(a) => run_inspect(a),
-        ExchangeCmd::Fingerprint(a) => run_fingerprint(a),
+        ExchangeCmd::Send(a) => {
+            let out = run_send(a)?;
+            println!("Wrote packet: {out}");
+            Ok(())
+        }
+        ExchangeCmd::Recv(a) => {
+            let out = run_recv(a)?;
+            println!("Decrypted file: {out}");
+            Ok(())
+        }
+        ExchangeCmd::Inspect(a) => {
+            let info = run_inspect(a)?;
+            print!("{}", format_inspect_legacy(&info));
+            Ok(())
+        }
+        ExchangeCmd::Fingerprint(a) => {
+            let fp = run_fingerprint(a)?;
+            println!("{fp}");
+            Ok(())
+        }
     }
 }
 
-fn run_send(args: SendArgs) -> Result<()> {
+fn run_json(args: ExchangeArgs) -> Result<()> {
+    let command_name = match args.cmd {
+        ExchangeCmd::Send(_) => "exchange.send",
+        ExchangeCmd::Recv(_) => "exchange.recv",
+        ExchangeCmd::Inspect(_) => "exchange.inspect",
+        ExchangeCmd::Fingerprint(_) => "exchange.fingerprint",
+    };
+
+    let result = match args.cmd {
+        ExchangeCmd::Send(a) => run_send(a).map(|out| serde_json::json!({ "output_path": out })),
+        ExchangeCmd::Recv(a) => run_recv(a).map(|out| serde_json::json!({ "output_path": out })),
+        ExchangeCmd::Inspect(a) => serde_json::to_value(run_inspect(a)?).map_err(Into::into),
+        ExchangeCmd::Fingerprint(a) => run_fingerprint(a).map(|fp| serde_json::json!({ "fingerprint": fp })),
+    };
+
+    match result {
+        Ok(data) => print_json_success(command_name, data),
+        Err(e) => {
+            let msg = e.to_string();
+            let code = if msg.contains("not found") {
+                "INPUT_NOT_FOUND"
+            } else if msg.contains("private key") || msg.contains("public key") {
+                "OUTPUT_INVALID"
+            } else {
+                "INTERNAL"
+            };
+            print_json_error(command_name, code, &msg, None)?;
+            process::exit(if code == "INTERNAL" { 1 } else { 2 });
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct ExchangeInspectData {
+    filename: String,
+    suite: String,
+    payload_ct_len: usize,
+    sender_fingerprint: Option<String>,
+}
+
+fn format_inspect_legacy(info: &ExchangeInspectData) -> String {
+    format!(
+        "filename={}\nsuite={}\npayload_ct_len={}\nsender_fingerprint={}\n",
+        info.filename,
+        info.suite,
+        info.payload_ct_len,
+        info.sender_fingerprint.clone().unwrap_or_default()
+    )
+}
+
+fn run_send(args: SendArgs) -> Result<String> {
     let suite = parse_suite(&args.suite)?;
     let payload = std::fs::read(&args.input)
         .with_context(|| format!("read input {}", args.input.display()))?;
@@ -133,11 +210,10 @@ fn run_send(args: SendArgs) -> Result<()> {
         payload_ct: ct,
     };
     write_packet(&args.out, &packet)?;
-    println!("Wrote packet: {}", args.out.display());
-    Ok(())
+    Ok(args.out.display().to_string())
 }
 
-fn run_recv(args: RecvArgs) -> Result<()> {
+fn run_recv(args: RecvArgs) -> Result<String> {
     let packet = read_packet(&args.input)?;
 
     let sk_raw = read_priv(&args.privkey)
@@ -166,11 +242,10 @@ fn run_recv(args: RecvArgs) -> Result<()> {
     let out_path = args.out_dir.join(sanitize_filename(&packet.filename));
     std::fs::write(&out_path, pt)
         .with_context(|| format!("write output {}", out_path.display()))?;
-    println!("Decrypted file: {}", out_path.display());
-    Ok(())
+    Ok(out_path.display().to_string())
 }
 
-fn run_fingerprint(args: FingerprintArgs) -> Result<()> {
+fn run_fingerprint(args: FingerprintArgs) -> Result<String> {
     let bytes =
         std::fs::read(&args.key).with_context(|| format!("read key {}", args.key.display()))?;
     let decoded = if let Ok(pubk) = read_pub(&args.key) {
@@ -181,31 +256,26 @@ fn run_fingerprint(args: FingerprintArgs) -> Result<()> {
         bytes
     };
     let hash = blake3::hash(&decoded);
-    println!("{}", Base64::encode_string(hash.as_bytes()));
-    Ok(())
+    Ok(Base64::encode_string(hash.as_bytes()))
 }
 
-fn run_inspect(args: InspectArgs) -> Result<()> {
+fn run_inspect(args: InspectArgs) -> Result<ExchangeInspectData> {
     let packet = read_packet(&args.input)?;
-    println!("filename={}", packet.filename);
-    println!(
-        "suite={}",
-        match packet.suite {
-            SuiteId::XChaCha20Poly1305 => "xchacha20",
-            SuiteId::Aes256Gcm => "aesgcm",
-        }
-    );
-    println!("payload_ct_len={}", packet.payload_ct.len());
-    if let Some(spk) = packet.sender_pubkey.as_ref() {
-        let hash = blake3::hash(spk);
-        println!(
-            "sender_fingerprint={}",
-            Base64::encode_string(hash.as_bytes())
-        );
-    } else {
-        println!("sender_fingerprint=");
+    let suite = match packet.suite {
+        SuiteId::XChaCha20Poly1305 => "xchacha20",
+        SuiteId::Aes256Gcm => "aesgcm",
     }
-    Ok(())
+    .to_string();
+    let sender_fingerprint = packet
+        .sender_pubkey
+        .as_ref()
+        .map(|spk| Base64::encode_string(blake3::hash(spk).as_bytes()));
+    Ok(ExchangeInspectData {
+        filename: packet.filename,
+        suite,
+        payload_ct_len: packet.payload_ct.len(),
+        sender_fingerprint,
+    })
 }
 
 struct ExchangePacket {
@@ -385,4 +455,36 @@ fn sanitize_filename(name: &str) -> String {
         s = "received.bin".to_string();
     }
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{format_inspect_legacy, ExchangeInspectData};
+
+    #[test]
+    fn inspect_legacy_output_contract() {
+        let info = ExchangeInspectData {
+            filename: "payload.txt".to_string(),
+            suite: "xchacha20".to_string(),
+            payload_ct_len: 1234,
+            sender_fingerprint: Some("ABCDEF".to_string()),
+        };
+        let out = format_inspect_legacy(&info);
+        assert!(out.contains("filename=payload.txt\n"));
+        assert!(out.contains("suite=xchacha20\n"));
+        assert!(out.contains("payload_ct_len=1234\n"));
+        assert!(out.contains("sender_fingerprint=ABCDEF\n"));
+    }
+
+    #[test]
+    fn inspect_legacy_output_contract_empty_sender() {
+        let info = ExchangeInspectData {
+            filename: "payload.txt".to_string(),
+            suite: "aesgcm".to_string(),
+            payload_ct_len: 10,
+            sender_fingerprint: None,
+        };
+        let out = format_inspect_legacy(&info);
+        assert!(out.contains("sender_fingerprint=\n"));
+    }
 }

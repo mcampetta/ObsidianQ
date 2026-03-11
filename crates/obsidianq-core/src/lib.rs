@@ -8,6 +8,7 @@
 //!   - `error`           — ObsidianError + Result alias
 
 pub mod crypto;
+pub mod delivery;
 pub mod engine;
 pub mod error;
 pub mod format;

@@ -7,6 +7,7 @@ use std::sync::{
 };
 use std::thread;
 use std::time::Duration;
+use std::process;
 
 use anyhow::{bail, Context, Result};
 use chacha20poly1305::{
@@ -25,6 +26,7 @@ use obsidianq_core::{
     format::{FileHeader, Mode},
 };
 
+use super::json_output::{print_json_error, print_json_success};
 use super::read_priv;
 
 const MULTI_MAGIC_V1: &[u8; 4] = b"MRK1";
@@ -54,9 +56,49 @@ pub struct DecryptArgs {
     /// Read password from stdin (one line). For GUI/scripted use.
     #[arg(long)]
     pub password_stdin: bool,
+
+    /// Emit machine-readable JSON response
+    #[arg(long)]
+    pub json: bool,
 }
 
 pub fn run(args: DecryptArgs) -> Result<()> {
+    let json = args.json;
+    if json && args.text {
+        print_json_error(
+            "decrypt",
+            "UNSUPPORTED_FORMAT",
+            "--json is not supported with --text mode",
+            Some("text"),
+        )?;
+        process::exit(2);
+    }
+    match run_impl(args) {
+        Ok(()) => {
+            if json {
+                print_json_success("decrypt", serde_json::json!({ "status": "ok" }))?;
+            }
+            Ok(())
+        }
+        Err(e) => {
+            if json {
+                let msg = e.to_string();
+                let code = if msg.contains("password") {
+                    "PASSWORD_MISSING"
+                } else if msg.contains("not found") {
+                    "INPUT_NOT_FOUND"
+                } else {
+                    "INTERNAL"
+                };
+                print_json_error("decrypt", code, &msg, None)?;
+                process::exit(if code == "INTERNAL" { 1 } else { 2 });
+            }
+            Err(e)
+        }
+    }
+}
+
+fn run_impl(args: DecryptArgs) -> Result<()> {
     if !args.text && (args.r#in.is_none() || args.out.is_none()) {
         bail!("provide --in and --out, or use --text for stdin/stdout mode");
     }

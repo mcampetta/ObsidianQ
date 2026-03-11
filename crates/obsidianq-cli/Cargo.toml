@@ -7,6 +7,10 @@ edition.workspace = true
 name = "obsidianq"
 path = "src/main.rs"
 
+[[bin]]
+name = "obsidianq-bootstrapper"
+path = "src/bootstrap_main.rs"
+
 [features]
 # Enable virtual drive mounting via WinFSP.
 # Requires WinFSP SDK at build time and runtime.
@@ -29,3 +33,26 @@ tracing-subscriber.workspace = true
 chacha20poly1305.workspace   = true
 rpassword = "7"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+sha2.workspace = true
+zip = { version = "2", default-features = false, features = ["deflate"] }
+tempfile = "3"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+    "Win32_Security_Credentials",
+    "Win32_System_Com",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_Controls",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[target.'cfg(windows)'.build-dependencies]
+winres = "0.1"

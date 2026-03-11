@@ -40,6 +40,9 @@ enum Commands {
     /// Decrypt a file
     Decrypt(cmd::decrypt::DecryptArgs),
 
+    /// Secure Delivery package workflows
+    Delivery(cmd::delivery::DeliveryArgs),
+
     /// Exchange encrypted packets (.obsqx) using PQC key exchange
     Exchange(cmd::exchange::ExchangeArgs),
 
@@ -78,6 +81,7 @@ fn main() -> Result<()> {
         Commands::Keygen(args) => cmd::keygen::run(args),
         Commands::Encrypt(args) => cmd::encrypt::run(args),
         Commands::Decrypt(args) => cmd::decrypt::run(args),
+        Commands::Delivery(args) => cmd::delivery::run(args),
         Commands::Exchange(args) => cmd::exchange::run(args),
         Commands::Inspect(args) => cmd::inspect::run(args),
         Commands::Benchmark(args) => cmd::benchmark::run(args),

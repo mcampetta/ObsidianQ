@@ -42,6 +42,7 @@ check_events.ps1
 ObsidianQ_session_handoff_*.txt
 docs/SESSION_HANDOFF_*.md
 docs/FUTURE_CHAT_PLAN.md
+docs/internal/
 docs/site/assets/
 tools.zip
 winfsp_layout_probe.obj

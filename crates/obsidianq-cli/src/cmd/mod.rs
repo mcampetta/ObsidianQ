@@ -1,9 +1,11 @@
 pub mod benchmark;
 pub mod contacts;
 pub mod decrypt;
+pub mod delivery;
 pub mod encrypt;
 pub mod exchange;
 pub mod inspect;
+pub mod json_output;
 pub mod key;
 pub mod keygen;
 pub mod mount;

@@ -1,7 +1,10 @@
 @echo off
 :: ObsidianQ - Install HKCU context-menu and file associations (no admin required)
 :: Registers:
-::   Right-click any file    -> "ObsidianQ Encrypt/Decrypt..."
+::   Right-click any file    -> "ObsidianQ Encrypt File"
+::   Right-click any file    -> "ObsidianQ Encrypt and make Package"
+::   Right-click any folder  -> "ObsidianQ Encrypt Folder"
+::   Right-click any folder  -> "ObsidianQ Encrypt Folder and make Package"
 ::   Right-click .obsq file  -> "ObsidianQ Decrypt..."
 ::   Open .vault files with ObsidianQ.Launcher.exe
 ::   Open .obsqpub identity files with ObsidianQ.Launcher.exe
@@ -27,10 +30,28 @@ echo.
 
 :: Any-file context menu
 set "KEY_ALL=HKCU\Software\Classes\*\shell\ObsidianQEncryptDecrypt"
-reg add "%KEY_ALL%"                 /ve /d "ObsidianQ Encrypt/Decrypt..." /f >nul
+reg add "%KEY_ALL%"                 /ve /d "ObsidianQ Encrypt File" /f >nul
 reg add "%KEY_ALL%"                 /v "Icon"     /d "\"%LAUNCHER%\",0" /f >nul
 reg add "%KEY_ALL%"                 /v "Position" /d "Bottom" /f >nul
 reg add "%KEY_ALL%\command"         /ve /d "\"%LAUNCHER%\" \"%%1\"" /f >nul
+
+set "KEY_ALL_PKG=HKCU\Software\Classes\*\shell\ObsidianQEncryptPackage"
+reg add "%KEY_ALL_PKG%"             /ve /d "ObsidianQ Encrypt and make Package" /f >nul
+reg add "%KEY_ALL_PKG%"             /v "Icon"     /d "\"%LAUNCHER%\",0" /f >nul
+reg add "%KEY_ALL_PKG%"             /v "Position" /d "Bottom" /f >nul
+reg add "%KEY_ALL_PKG%\command"     /ve /d "\"%LAUNCHER%\" --create-package \"%%1\"" /f >nul
+
+set "KEY_DIR_PKG=HKCU\Software\Classes\Directory\shell\ObsidianQEncryptPackage"
+reg add "%KEY_DIR_PKG%"             /ve /d "ObsidianQ Encrypt Folder and make Package" /f >nul
+reg add "%KEY_DIR_PKG%"             /v "Icon"     /d "\"%LAUNCHER%\",0" /f >nul
+reg add "%KEY_DIR_PKG%"             /v "Position" /d "Bottom" /f >nul
+reg add "%KEY_DIR_PKG%\command"     /ve /d "\"%LAUNCHER%\" --create-package \"%%1\"" /f >nul
+
+set "KEY_DIR_ENC=HKCU\Software\Classes\Directory\shell\ObsidianQEncryptFolder"
+reg add "%KEY_DIR_ENC%"             /ve /d "ObsidianQ Encrypt Folder" /f >nul
+reg add "%KEY_DIR_ENC%"             /v "Icon"     /d "\"%LAUNCHER%\",0" /f >nul
+reg add "%KEY_DIR_ENC%"             /v "Position" /d "Bottom" /f >nul
+reg add "%KEY_DIR_ENC%\command"     /ve /d "\"%LAUNCHER%\" --encrypt-folder \"%%1\"" /f >nul
 
 :: .obsq association + decrypt verb
 set "KEY_OBSQ_FT=HKCU\Software\Classes\.obsq"

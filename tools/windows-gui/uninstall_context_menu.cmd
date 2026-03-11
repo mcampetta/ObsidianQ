@@ -4,6 +4,9 @@
 echo Removing ObsidianQ shell entries...
 
 reg delete "HKCU\Software\Classes\*\shell\ObsidianQEncryptDecrypt" /f >nul 2>&1
+reg delete "HKCU\Software\Classes\*\shell\ObsidianQEncryptPackage" /f >nul 2>&1
+reg delete "HKCU\Software\Classes\Directory\shell\ObsidianQEncryptFolder" /f >nul 2>&1
+reg delete "HKCU\Software\Classes\Directory\shell\ObsidianQEncryptPackage" /f >nul 2>&1
 reg delete "HKCU\Software\Classes\obsq_auto_file" /f >nul 2>&1
 reg delete "HKCU\Software\Classes\.obsq" /f >nul 2>&1
 reg delete "HKCU\Software\Classes\obsidianq_vault_file" /f >nul 2>&1
