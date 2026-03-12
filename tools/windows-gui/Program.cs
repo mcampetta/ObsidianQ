@@ -5570,6 +5570,60 @@ class MainForm : Form
             await proc.WaitForExitAsync();
             return (proc.ExitCode, stdout, stderr);
         }
+        async Task<SenderMatchInfo> ResolveSignedSenderAsync(string senderFingerprint, string senderName, string senderEmail, string senderDevice)
+        {
+            string fpNorm = NormalizeInspectFingerprint(senderFingerprint);
+            if (string.IsNullOrWhiteSpace(fpNorm))
+                return new SenderMatchInfo();
+
+            string signingPubPath = Path.Combine(LocalKeysDir, "obsidianq_signing_ed25519.pub");
+            if (File.Exists(signingPubPath))
+            {
+                var (code, stdout, _) = await RunInspectCliAsync($"exchange fingerprint --key \"{signingPubPath}\"");
+                string localFp = NormalizeInspectFingerprint(stdout?.Trim());
+                if (code == 0 && !string.IsNullOrWhiteSpace(localFp) &&
+                    string.Equals(localFp, fpNorm, StringComparison.OrdinalIgnoreCase))
+                {
+                    var profile = LoadLocalIdentityProfile();
+                    string localLabel = !string.IsNullOrWhiteSpace(profile.Name) ? profile.Name : Environment.UserName;
+                    return new SenderMatchInfo
+                    {
+                        Status = "LOCAL_IDENTITY",
+                        Label = $"{localLabel} (this machine)"
+                    };
+                }
+            }
+
+            var contacts = LoadTrustedRecipientInfos();
+            var directFpMatch = contacts.FirstOrDefault(c =>
+                string.Equals(NormalizeInspectFingerprint(c.Fingerprint), fpNorm, StringComparison.OrdinalIgnoreCase));
+            if (directFpMatch != null)
+            {
+                return new SenderMatchInfo
+                {
+                    Status = "CONTACT_FINGERPRINT_MATCH",
+                    Label = directFpMatch.Name
+                };
+            }
+
+            string nameNorm = NormalizeInspectText(senderName);
+            string emailNorm = NormalizeInspectText(senderEmail);
+            string deviceNorm = NormalizeInspectText(senderDevice);
+            var metadataMatch = contacts.FirstOrDefault(c =>
+                (!string.IsNullOrWhiteSpace(nameNorm) && string.Equals(c.Name, nameNorm, StringComparison.OrdinalIgnoreCase)) ||
+                (!string.IsNullOrWhiteSpace(emailNorm) && string.Equals(c.Email, emailNorm, StringComparison.OrdinalIgnoreCase)) ||
+                (!string.IsNullOrWhiteSpace(deviceNorm) && string.Equals(c.Device, deviceNorm, StringComparison.OrdinalIgnoreCase)));
+            if (metadataMatch != null)
+            {
+                return new SenderMatchInfo
+                {
+                    Status = "CONTACT_METADATA_MATCH",
+                    Label = metadataMatch.Name
+                };
+            }
+
+            return new SenderMatchInfo();
+        }
         async Task InspectPathAsync(string path)
         {
             const string inspectSfxMagic = "OBSQSFX1";
@@ -5741,12 +5795,23 @@ class MainForm : Form
                         sb.AppendLine($"Inspect stderr: {dStderr.TrimEnd()}");
 
                     string schema = "Unknown";
+                    string packageUuid = "-";
+                    string createdUtc = "-";
+                    string appVersion = "-";
                     string packageName = Path.GetFileNameWithoutExtension(path);
+                    string recipientMode = "-";
                     string packageFormat = "secure_delivery_zip";
                     string itemCount = "Unknown";
                     string totalBytes = "Unknown";
                     string hash = "Unknown";
                     string instructions = "Unknown";
+                    string signed = "false";
+                    string senderName = "-";
+                    string senderEmail = string.Empty;
+                    string senderDevice = string.Empty;
+                    string senderFingerprint = "-";
+                    string signatureAlgorithm = "-";
+                    var fileLines = new List<string>();
 
                     if (dCode == 0 && !string.IsNullOrWhiteSpace(dStdout))
                     {
@@ -5756,32 +5821,73 @@ class MainForm : Form
                             if (doc.RootElement.TryGetProperty("data", out var data))
                             {
                                 if (data.TryGetProperty("schema_version", out var sv)) schema = sv.GetRawText();
+                                if (data.TryGetProperty("package_uuid", out var pu)) packageUuid = string.IsNullOrWhiteSpace(pu.GetString()) ? "-" : pu.GetString()!;
+                                if (data.TryGetProperty("created_utc", out var cu)) createdUtc = cu.GetString() ?? createdUtc;
+                                if (data.TryGetProperty("obsidianq_version", out var ov)) appVersion = string.IsNullOrWhiteSpace(ov.GetString()) ? "-" : ov.GetString()!;
                                 if (data.TryGetProperty("package_name", out var pn)) packageName = pn.GetString() ?? packageName;
+                                if (data.TryGetProperty("recipient_mode", out var rm)) recipientMode = string.IsNullOrWhiteSpace(rm.GetString()) ? "-" : rm.GetString()!;
                                 if (data.TryGetProperty("package_format", out var pf)) packageFormat = pf.GetString() ?? packageFormat;
                                 if (data.TryGetProperty("source_item_count", out var ic)) itemCount = ic.GetRawText();
                                 if (data.TryGetProperty("source_total_bytes", out var tb)) totalBytes = tb.GetRawText();
                                 if (data.TryGetProperty("payload_sha256", out var hs)) hash = hs.GetString() ?? hash;
                                 if (data.TryGetProperty("has_instructions", out var hi)) instructions = hi.GetRawText();
+                                if (data.TryGetProperty("signed", out var sg)) signed = sg.GetRawText();
+                                if (data.TryGetProperty("sender_name", out var sn)) senderName = string.IsNullOrWhiteSpace(sn.GetString()) ? "-" : sn.GetString()!;
+                                if (data.TryGetProperty("sender_email", out var se)) senderEmail = se.GetString() ?? string.Empty;
+                                if (data.TryGetProperty("sender_device", out var sd)) senderDevice = sd.GetString() ?? string.Empty;
+                                if (data.TryGetProperty("sender_fingerprint", out var sf)) senderFingerprint = string.IsNullOrWhiteSpace(sf.GetString()) ? "-" : sf.GetString()!;
+                                if (data.TryGetProperty("signature_algorithm", out var sa)) signatureAlgorithm = string.IsNullOrWhiteSpace(sa.GetString()) ? "-" : sa.GetString()!;
+                                if (data.TryGetProperty("files", out var filesEl) && filesEl.ValueKind == JsonValueKind.Array)
+                                {
+                                    foreach (var entry in filesEl.EnumerateArray())
+                                    {
+                                        string fp = entry.TryGetProperty("path", out var pth) ? (pth.GetString() ?? "-") : "-";
+                                        fileLines.Add(fp);
+                                    }
+                                }
                             }
                         }
                         catch { }
                     }
+                    var senderMatch = await ResolveSignedSenderAsync(senderFingerprint, senderName, senderEmail, senderDevice);
 
                     lblInspectVersionVal.Text = schema;
                     sb.AppendLine("Container: Self-Extracting Package (EXE)");
                     sb.AppendLine($"Schema version: {schema}");
+                    sb.AppendLine($"Package ID: {packageUuid}");
+                    sb.AppendLine($"Created: {createdUtc}");
+                    sb.AppendLine($"Created by version: {appVersion}");
                     sb.AppendLine($"Package name: {packageName}");
+                    sb.AppendLine($"Recipient mode: {recipientMode}");
                     sb.AppendLine($"Package format: {packageFormat}");
                     sb.AppendLine($"Source item count: {itemCount}");
                     sb.AppendLine($"Source total bytes: {totalBytes}");
                     sb.AppendLine($"Has instructions: {instructions}");
                     sb.AppendLine($"Payload SHA-256: {hash}");
+                    sb.AppendLine($"Signed: {signed}");
+                    sb.AppendLine($"Signing identity: {senderName}");
+                    sb.AppendLine($"Signing fingerprint: {senderFingerprint}");
+                    sb.AppendLine($"Signing key match: {senderMatch.Status} ({senderMatch.Label})");
+                    sb.AppendLine($"Signature algorithm: {signatureAlgorithm}");
+                    if (fileLines.Count > 0)
+                    {
+                        sb.AppendLine("Files:");
+                        foreach (string fileLine in fileLines)
+                            sb.AppendLine($"- {fileLine}");
+                    }
                     sb.AppendLine();
 
                     var (vCode, vStdout, vStderr) = await RunInspectCliAsync($"delivery verify --json \"{tempZip}\"");
-                    if (vCode == 0)
+                    sb.AppendLine("Verification:");
+                    bool verifyOk = vCode == 0;
+                    bool signedPackage = string.Equals(signed, "true", StringComparison.OrdinalIgnoreCase);
+                    bool identityPresent = !string.Equals(senderFingerprint, "-", StringComparison.Ordinal);
+                    sb.AppendLine($"{(verifyOk && signedPackage ? "✓" : "X")} {(signedPackage ? (verifyOk ? "Package signature valid" : "Package signature invalid") : "Package is not signed")}");
+                    sb.AppendLine($"{(identityPresent ? "✓" : "X")} {(identityPresent ? "Signing identity present" : "Signing identity missing")}");
+                    sb.AppendLine($"{(verifyOk ? "✓" : "X")} {(verifyOk ? "Contents match manifest" : "Contents do not match manifest")}");
+                    sb.AppendLine($"{(verifyOk ? "✓" : "X")} {(verifyOk ? "No tampering detected" : "Tampering or manifest verification failed")}");
+                    if (verifyOk)
                     {
-                        sb.AppendLine("Integrity: VERIFIED");
                         InspectStatus("Self-Extracting EXE package verified.");
                     }
                     else
@@ -5832,12 +5938,23 @@ class MainForm : Form
                         sb.AppendLine($"Inspect stderr: {dStderr.TrimEnd()}");
 
                     string schema = "Unknown";
+                    string packageUuid = "-";
+                    string createdUtc = "-";
+                    string appVersion = "-";
                     string packageName = Path.GetFileNameWithoutExtension(path);
+                    string recipientMode = "-";
                     string packageFormat = "secure_delivery_zip";
                     string itemCount = "Unknown";
                     string totalBytes = "Unknown";
                     string hash = "Unknown";
                     string instructions = "Unknown";
+                    string signed = "false";
+                    string senderName = "-";
+                    string senderEmail = string.Empty;
+                    string senderDevice = string.Empty;
+                    string senderFingerprint = "-";
+                    string signatureAlgorithm = "-";
+                    var fileLines = new List<string>();
 
                     if (dCode == 0 && !string.IsNullOrWhiteSpace(dStdout))
                     {
@@ -5847,32 +5964,73 @@ class MainForm : Form
                             if (doc.RootElement.TryGetProperty("data", out var data))
                             {
                                 if (data.TryGetProperty("schema_version", out var sv)) schema = sv.GetRawText();
+                                if (data.TryGetProperty("package_uuid", out var pu)) packageUuid = string.IsNullOrWhiteSpace(pu.GetString()) ? "-" : pu.GetString()!;
+                                if (data.TryGetProperty("created_utc", out var cu)) createdUtc = cu.GetString() ?? createdUtc;
+                                if (data.TryGetProperty("obsidianq_version", out var ov)) appVersion = string.IsNullOrWhiteSpace(ov.GetString()) ? "-" : ov.GetString()!;
                                 if (data.TryGetProperty("package_name", out var pn)) packageName = pn.GetString() ?? packageName;
+                                if (data.TryGetProperty("recipient_mode", out var rm)) recipientMode = string.IsNullOrWhiteSpace(rm.GetString()) ? "-" : rm.GetString()!;
                                 if (data.TryGetProperty("package_format", out var pf)) packageFormat = pf.GetString() ?? packageFormat;
                                 if (data.TryGetProperty("source_item_count", out var ic)) itemCount = ic.GetRawText();
                                 if (data.TryGetProperty("source_total_bytes", out var tb)) totalBytes = tb.GetRawText();
                                 if (data.TryGetProperty("payload_sha256", out var hs)) hash = hs.GetString() ?? hash;
                                 if (data.TryGetProperty("has_instructions", out var hi)) instructions = hi.GetRawText();
+                                if (data.TryGetProperty("signed", out var sg)) signed = sg.GetRawText();
+                                if (data.TryGetProperty("sender_name", out var sn)) senderName = string.IsNullOrWhiteSpace(sn.GetString()) ? "-" : sn.GetString()!;
+                                if (data.TryGetProperty("sender_email", out var se)) senderEmail = se.GetString() ?? string.Empty;
+                                if (data.TryGetProperty("sender_device", out var sd)) senderDevice = sd.GetString() ?? string.Empty;
+                                if (data.TryGetProperty("sender_fingerprint", out var sf)) senderFingerprint = string.IsNullOrWhiteSpace(sf.GetString()) ? "-" : sf.GetString()!;
+                                if (data.TryGetProperty("signature_algorithm", out var sa)) signatureAlgorithm = string.IsNullOrWhiteSpace(sa.GetString()) ? "-" : sa.GetString()!;
+                                if (data.TryGetProperty("files", out var filesEl) && filesEl.ValueKind == JsonValueKind.Array)
+                                {
+                                    foreach (var entry in filesEl.EnumerateArray())
+                                    {
+                                        string fp = entry.TryGetProperty("path", out var pth) ? (pth.GetString() ?? "-") : "-";
+                                        fileLines.Add(fp);
+                                    }
+                                }
                             }
                         }
                         catch { /* leave defaults */ }
                     }
+                    var senderMatch = await ResolveSignedSenderAsync(senderFingerprint, senderName, senderEmail, senderDevice);
 
                     lblInspectVersionVal.Text = schema;
                     sb.AppendLine("Container: Self-Extracting Package");
                     sb.AppendLine($"Schema version: {schema}");
+                    sb.AppendLine($"Package ID: {packageUuid}");
+                    sb.AppendLine($"Created: {createdUtc}");
+                    sb.AppendLine($"Created by version: {appVersion}");
                     sb.AppendLine($"Package name: {packageName}");
+                    sb.AppendLine($"Recipient mode: {recipientMode}");
                     sb.AppendLine($"Package format: {packageFormat}");
                     sb.AppendLine($"Source item count: {itemCount}");
                     sb.AppendLine($"Source total bytes: {totalBytes}");
                     sb.AppendLine($"Has instructions: {instructions}");
                     sb.AppendLine($"Payload SHA-256: {hash}");
+                    sb.AppendLine($"Signed: {signed}");
+                    sb.AppendLine($"Signing identity: {senderName}");
+                    sb.AppendLine($"Signing fingerprint: {senderFingerprint}");
+                    sb.AppendLine($"Signing key match: {senderMatch.Status} ({senderMatch.Label})");
+                    sb.AppendLine($"Signature algorithm: {signatureAlgorithm}");
+                    if (fileLines.Count > 0)
+                    {
+                        sb.AppendLine("Files:");
+                        foreach (string fileLine in fileLines)
+                            sb.AppendLine($"- {fileLine}");
+                    }
                     sb.AppendLine();
 
                     var (vCode, vStdout, vStderr) = await RunInspectCliAsync($"delivery verify --json \"{path}\"");
-                    if (vCode == 0)
+                    sb.AppendLine("Verification:");
+                    bool verifyOk = vCode == 0;
+                    bool signedPackage = string.Equals(signed, "true", StringComparison.OrdinalIgnoreCase);
+                    bool identityPresent = !string.Equals(senderFingerprint, "-", StringComparison.Ordinal);
+                    sb.AppendLine($"{(verifyOk && signedPackage ? "✓" : "X")} {(signedPackage ? (verifyOk ? "Package signature valid" : "Package signature invalid") : "Package is not signed")}");
+                    sb.AppendLine($"{(identityPresent ? "✓" : "X")} {(identityPresent ? "Signing identity present" : "Signing identity missing")}");
+                    sb.AppendLine($"{(verifyOk ? "✓" : "X")} {(verifyOk ? "Contents match manifest" : "Contents do not match manifest")}");
+                    sb.AppendLine($"{(verifyOk ? "✓" : "X")} {(verifyOk ? "No tampering detected" : "Tampering or manifest verification failed")}");
+                    if (verifyOk)
                     {
-                        sb.AppendLine("Integrity: VERIFIED");
                         InspectStatus("Self-Extracting package verified.");
                     }
                     else
@@ -5949,12 +6107,23 @@ class MainForm : Form
                             sb.AppendLine($"Inspect stderr: {dStderr.TrimEnd()}");
 
                         string schema = "Unknown";
+                        string packageUuid = "-";
+                        string createdUtc = "-";
+                        string appVersion = "-";
                         string packageName = Path.GetFileNameWithoutExtension(path).Replace("_SecureDelivery", "", StringComparison.OrdinalIgnoreCase);
+                        string recipientMode = "-";
                         string packageFormat = "secure_delivery_zip";
                         string itemCount = "Unknown";
                         string totalBytes = "Unknown";
                         string hash = "Unknown";
                         string instructions = "Unknown";
+                        string signed = "false";
+                        string senderName = "-";
+                        string senderEmail = string.Empty;
+                        string senderDevice = string.Empty;
+                        string senderFingerprint = "-";
+                        string signatureAlgorithm = "-";
+                        var fileLines = new List<string>();
 
                         if (dCode == 0 && !string.IsNullOrWhiteSpace(dStdout))
                         {
@@ -5964,32 +6133,73 @@ class MainForm : Form
                                 if (doc.RootElement.TryGetProperty("data", out var data))
                                 {
                                     if (data.TryGetProperty("schema_version", out var sv)) schema = sv.GetRawText();
+                                    if (data.TryGetProperty("package_uuid", out var pu)) packageUuid = string.IsNullOrWhiteSpace(pu.GetString()) ? "-" : pu.GetString()!;
+                                    if (data.TryGetProperty("created_utc", out var cu)) createdUtc = cu.GetString() ?? createdUtc;
+                                    if (data.TryGetProperty("obsidianq_version", out var ov)) appVersion = string.IsNullOrWhiteSpace(ov.GetString()) ? "-" : ov.GetString()!;
                                     if (data.TryGetProperty("package_name", out var pn)) packageName = pn.GetString() ?? packageName;
+                                    if (data.TryGetProperty("recipient_mode", out var rm)) recipientMode = string.IsNullOrWhiteSpace(rm.GetString()) ? "-" : rm.GetString()!;
                                     if (data.TryGetProperty("package_format", out var pf)) packageFormat = pf.GetString() ?? packageFormat;
                                     if (data.TryGetProperty("source_item_count", out var ic)) itemCount = ic.GetRawText();
                                     if (data.TryGetProperty("source_total_bytes", out var tb)) totalBytes = tb.GetRawText();
                                     if (data.TryGetProperty("payload_sha256", out var hs)) hash = hs.GetString() ?? hash;
                                     if (data.TryGetProperty("has_instructions", out var hi)) instructions = hi.GetRawText();
+                                    if (data.TryGetProperty("signed", out var sg)) signed = sg.GetRawText();
+                                    if (data.TryGetProperty("sender_name", out var sn)) senderName = string.IsNullOrWhiteSpace(sn.GetString()) ? "-" : sn.GetString()!;
+                                    if (data.TryGetProperty("sender_email", out var se)) senderEmail = se.GetString() ?? string.Empty;
+                                    if (data.TryGetProperty("sender_device", out var sd)) senderDevice = sd.GetString() ?? string.Empty;
+                                    if (data.TryGetProperty("sender_fingerprint", out var sf)) senderFingerprint = string.IsNullOrWhiteSpace(sf.GetString()) ? "-" : sf.GetString()!;
+                                    if (data.TryGetProperty("signature_algorithm", out var sa)) signatureAlgorithm = string.IsNullOrWhiteSpace(sa.GetString()) ? "-" : sa.GetString()!;
+                                    if (data.TryGetProperty("files", out var filesEl) && filesEl.ValueKind == JsonValueKind.Array)
+                                    {
+                                        foreach (var entry in filesEl.EnumerateArray())
+                                        {
+                                            string fp = entry.TryGetProperty("path", out var pth) ? (pth.GetString() ?? "-") : "-";
+                                            fileLines.Add(fp);
+                                        }
+                                    }
                                 }
                             }
                             catch { /* leave defaults */ }
                         }
+                        var senderMatch = await ResolveSignedSenderAsync(senderFingerprint, senderName, senderEmail, senderDevice);
 
                         lblInspectVersionVal.Text = schema;
                         sb.AppendLine("Container: Self-Extracting Package (ZIP)");
                         sb.AppendLine($"Schema version: {schema}");
+                        sb.AppendLine($"Package ID: {packageUuid}");
+                        sb.AppendLine($"Created: {createdUtc}");
+                        sb.AppendLine($"Created by version: {appVersion}");
                         sb.AppendLine($"Package name: {packageName}");
+                        sb.AppendLine($"Recipient mode: {recipientMode}");
                         sb.AppendLine($"Package format: {packageFormat}");
                         sb.AppendLine($"Source item count: {itemCount}");
                         sb.AppendLine($"Source total bytes: {totalBytes}");
                         sb.AppendLine($"Has instructions: {instructions}");
                         sb.AppendLine($"Payload SHA-256: {hash}");
+                        sb.AppendLine($"Signed: {signed}");
+                        sb.AppendLine($"Signing identity: {senderName}");
+                        sb.AppendLine($"Signing fingerprint: {senderFingerprint}");
+                        sb.AppendLine($"Signing key match: {senderMatch.Status} ({senderMatch.Label})");
+                        sb.AppendLine($"Signature algorithm: {signatureAlgorithm}");
+                        if (fileLines.Count > 0)
+                        {
+                            sb.AppendLine("Files:");
+                            foreach (string fileLine in fileLines)
+                                sb.AppendLine($"- {fileLine}");
+                        }
                         sb.AppendLine();
 
                         var (vCode, vStdout, vStderr) = await RunInspectCliAsync($"delivery verify --json \"{tempZip}\"");
-                        if (vCode == 0)
+                        sb.AppendLine("Verification:");
+                        bool verifyOk = vCode == 0;
+                        bool signedPackage = string.Equals(signed, "true", StringComparison.OrdinalIgnoreCase);
+                        bool identityPresent = !string.Equals(senderFingerprint, "-", StringComparison.Ordinal);
+                        sb.AppendLine($"{(verifyOk && signedPackage ? "✓" : "X")} {(signedPackage ? (verifyOk ? "Package signature valid" : "Package signature invalid") : "Package is not signed")}");
+                        sb.AppendLine($"{(identityPresent ? "✓" : "X")} {(identityPresent ? "Signing identity present" : "Signing identity missing")}");
+                        sb.AppendLine($"{(verifyOk ? "✓" : "X")} {(verifyOk ? "Contents match manifest" : "Contents do not match manifest")}");
+                        sb.AppendLine($"{(verifyOk ? "✓" : "X")} {(verifyOk ? "No tampering detected" : "Tampering or manifest verification failed")}");
+                        if (verifyOk)
                         {
-                            sb.AppendLine("Integrity: VERIFIED");
                             InspectStatus("Self-Extracting ZIP package verified.");
                         }
                         else
@@ -6197,6 +6407,22 @@ class MainForm : Form
         txtDelExtractOut.Text = string.Empty;
         var chkDelCompress = new CheckBox { Text = "Compress files before packaging", AutoSize = true, ForeColor = Theme.TextMain, BackColor = Theme.Bg, Font = Theme.SafeMono(8.5f) };
         var chkDelIncludeInstructions = new CheckBox { Text = "Include custom extraction instructions", AutoSize = true, Checked = false, ForeColor = Theme.TextMain, BackColor = Theme.Bg, Font = Theme.SafeMono(8.5f) };
+        var chkDelSignMetadata = new CheckBox { Text = "Sign package metadata and include verification proof", AutoSize = true, Checked = true, ForeColor = Theme.TextMain, BackColor = Theme.Bg, Font = Theme.SafeMono(8.5f) };
+        var chkDelIncludeSenderDetails = new CheckBox { Text = "Include sender name/email/device metadata", AutoSize = true, Checked = true, ForeColor = Theme.TextMain, BackColor = Theme.Bg, Font = Theme.SafeMono(8.5f) };
+        var chkDelIncludeFileList = new CheckBox { Text = "Include file list in package information", AutoSize = true, Checked = true, ForeColor = Theme.TextMain, BackColor = Theme.Bg, Font = Theme.SafeMono(8.5f) };
+        var chkDelIncludeVersionMetadata = new CheckBox { Text = "Include ObsidianQ version metadata", AutoSize = true, Checked = true, ForeColor = Theme.TextMain, BackColor = Theme.Bg, Font = Theme.SafeMono(8.5f) };
+        void RefreshDeliveryOptionVisuals()
+        {
+            bool senderDetailsAvailable = chkDelSignMetadata.Checked;
+            if (!senderDetailsAvailable && chkDelIncludeSenderDetails.Checked)
+                chkDelIncludeSenderDetails.Checked = false;
+            chkDelIncludeSenderDetails.ForeColor = senderDetailsAvailable ? Theme.TextMain : Theme.TextDim;
+        }
+        var lblDelMetadataHint = MakeLabel("Uncheck signing to create an integrity-only package without sender proof.", 8.0f);
+        lblDelMetadataHint.ForeColor = Theme.TextDim;
+        lblDelMetadataHint.AutoSize = false;
+        lblDelMetadataHint.Dock = DockStyle.Fill;
+        lblDelMetadataHint.TextAlign = ContentAlignment.TopLeft;
         var rbDelZip = new RadioButton { Text = "ZIP Archive (Recommended)", AutoSize = true, Checked = true, ForeColor = Theme.TextMain, BackColor = Theme.Bg, Font = Theme.SafeMono(8.5f) };
         var rbDelExe = new RadioButton { Text = "Single EXE File", AutoSize = true, ForeColor = Theme.TextMain, BackColor = Theme.Bg, Font = Theme.SafeMono(8.5f) };
         var lstDelSources = new ListBox
@@ -6438,6 +6664,10 @@ class MainForm : Form
             lblDelOutputPreview.Text = BuildDeliveryPackagePath();
             txtDelPackagePath.Text = BuildDeliveryPackagePath();
             txtDelInstructions.Enabled = chkDelIncludeInstructions.Checked;
+            lblDelMetadataHint.Text = chkDelSignMetadata.Checked
+                ? "Signed packages expose fingerprint-based verification.\r\nSender details are optional."
+                : "Unsigned packages omit sender proof.\r\nIdentity metadata is not included.";
+            RefreshDeliveryOptionVisuals();
         }
 
         async Task<(int ExitCode, string Stdout, string Stderr)> RunDeliveryCliAsync(string args, IEnumerable<string>? stdinLines = null)
@@ -6582,6 +6812,7 @@ class MainForm : Form
         {
             if (string.IsNullOrWhiteSpace(path)) return;
             if (!File.Exists(path) && !Directory.Exists(path)) return;
+            if (_tabs is null) return;
             _tabs.SelectedIndex = 4; // Self-Extracting Package
             TryAutoSetDeliveryNameFromSource(path);
             string? outputDir = GetDeliveryOutputDirFromSource(path);
@@ -6649,7 +6880,7 @@ class MainForm : Form
         };
         btnDelCreate = new NeonButton { Text = "CREATE PACKAGE", Dock = DockStyle.Fill, Margin = new Padding(0, 2, 3, 2) };
         var btnDelOpenOut = new NeonButton { Text = "OPEN OUTPUT FOLDER", Dock = DockStyle.Fill, Margin = new Padding(0, 2, 0, 2) };
-        var btnDelViewDetails = new NeonButton { Text = "VIEW DETAILS", Dock = DockStyle.Fill, Margin = new Padding(3, 2, 0, 2) };
+        var btnDelViewDetails = new NeonButton { Text = "VIEW ACTIVITY LOG", Dock = DockStyle.Fill, Margin = new Padding(3, 2, 0, 2) };
         btnDelOpenOut.Click += (_, _) =>
         {
             string dir = string.IsNullOrWhiteSpace(txtDelOutputDir.Text) ? Environment.CurrentDirectory : txtDelOutputDir.Text;
@@ -6719,6 +6950,10 @@ class MainForm : Form
             argsSb.Append($"--output \"{txtDelOutputDir.Text}\" ");
             argsSb.Append($"--name \"{txtDelName.Text}\" ");
             if (chkDelCompress.Checked) argsSb.Append("--compress ");
+            if (!chkDelSignMetadata.Checked) argsSb.Append("--unsigned ");
+            if (chkDelSignMetadata.Checked && !chkDelIncludeSenderDetails.Checked) argsSb.Append("--omit-sender-details ");
+            if (!chkDelIncludeFileList.Checked) argsSb.Append("--omit-file-list ");
+            if (!chkDelIncludeVersionMetadata.Checked) argsSb.Append("--omit-version-metadata ");
             string? tempInstructions = null;
             if (chkDelIncludeInstructions.Checked)
             {
@@ -6831,9 +7066,14 @@ class MainForm : Form
         txtDelPassword.TextChanged += (_, _) => RefreshDeliverySummary();
         txtDelPasswordConfirm.TextChanged += (_, _) => RefreshDeliverySummary();
         chkDelIncludeInstructions.CheckedChanged += (_, _) => RefreshDeliverySummary();
+        chkDelSignMetadata.CheckedChanged += (_, _) => RefreshDeliverySummary();
+        chkDelIncludeSenderDetails.CheckedChanged += (_, _) => RefreshDeliverySummary();
+        chkDelIncludeFileList.CheckedChanged += (_, _) => RefreshDeliverySummary();
+        chkDelIncludeVersionMetadata.CheckedChanged += (_, _) => RefreshDeliverySummary();
         rbDelZip.CheckedChanged += (_, _) => RefreshDeliverySummary();
         rbDelExe.CheckedChanged += (_, _) => RefreshDeliverySummary();
         chkDelCompress.CheckedChanged += (_, _) => RefreshDeliverySummary();
+        RefreshDeliveryOptionVisuals();
         RefreshDeliverySummary();
 
         var delAccess = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 1, BackColor = Theme.Bg, Margin = new Padding(0) };
@@ -6868,15 +7108,20 @@ class MainForm : Form
         delOutputHost.Controls.Add(MakeLabel("OUTPUT FOLDER", 8.5f, true), 0, 0);
         delOutputHost.Controls.Add(delOutRow, 1, 0);
 
-        var delOptionsCompact = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 6, BackColor = Theme.Bg, Margin = new Padding(0), Padding = new Padding(0) };
+        var delOptionsCompact = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 10, BackColor = Theme.Bg, Margin = new Padding(0), Padding = new Padding(0) };
         delOptionsCompact.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
         delOptionsCompact.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
         delOptionsCompact.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
         delOptionsCompact.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
         delOptionsCompact.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
         delOptionsCompact.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
-        var delNameRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = Theme.Bg, Margin = new Padding(0) };
+        delOptionsCompact.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
+        delOptionsCompact.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
+        delOptionsCompact.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
+        delOptionsCompact.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+        var delNameRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1, BackColor = Theme.Bg, Margin = new Padding(0) };
         delNameRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
+        delNameRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 250));
         delNameRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         delNameRow.Controls.Add(MakeLabel("PACKAGE NAME", 8.5f, true), 0, 0);
         delNameRow.Controls.Add(txtDelName, 1, 0);
@@ -6885,6 +7130,11 @@ class MainForm : Form
         delOptionsCompact.Controls.Add(rbDelExe, 0, 2);
         delOptionsCompact.Controls.Add(chkDelCompress, 0, 3);
         delOptionsCompact.Controls.Add(chkDelIncludeInstructions, 0, 4);
+        delOptionsCompact.Controls.Add(chkDelSignMetadata, 0, 5);
+        delOptionsCompact.Controls.Add(chkDelIncludeSenderDetails, 0, 6);
+        delOptionsCompact.Controls.Add(chkDelIncludeFileList, 0, 7);
+        delOptionsCompact.Controls.Add(chkDelIncludeVersionMetadata, 0, 8);
+        delOptionsCompact.Controls.Add(lblDelMetadataHint, 0, 9);
         var delFinalOutputHost = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = Theme.Bg, Margin = new Padding(0) };
         delFinalOutputHost.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
         delFinalOutputHost.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -6899,7 +7149,7 @@ class MainForm : Form
         delActions.Controls.Add(btnDelOpenOut, 1, 0);
         delActions.Controls.Add(btnDelViewDetails, 2, 0);
 
-        var delLogContainer = new Panel { Dock = DockStyle.Fill, BackColor = Theme.LogBg };
+        var delLogContainer = new Panel { Dock = DockStyle.Fill, BackColor = Theme.LogBg, Margin = new Padding(0, 2, 0, 2) };
         delLogContainer.Controls.Add(lblDelActivity);
         delLogContainer.Paint += (_, pe) =>
         {
@@ -6919,13 +7169,13 @@ class MainForm : Form
         outerDelivery.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
         outerDelivery.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
         outerDelivery.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
-        outerDelivery.RowStyles.Add(new RowStyle(SizeType.Absolute, 120));
+        outerDelivery.RowStyles.Add(new RowStyle(SizeType.Absolute, 108));
         outerDelivery.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
-        outerDelivery.RowStyles.Add(new RowStyle(SizeType.Absolute, 188));
+        outerDelivery.RowStyles.Add(new RowStyle(SizeType.Absolute, 276));
         outerDelivery.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
         outerDelivery.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
         outerDelivery.RowStyles.Add(new RowStyle(SizeType.Absolute, 0));
-        outerDelivery.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        outerDelivery.RowStyles.Add(new RowStyle(SizeType.Absolute, 0));
         outerDelivery.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
         outerDelivery.Controls.Add(MakeTabHeader(
             "SELF-EXTRACTING PACKAGE",
@@ -6941,8 +7191,8 @@ class MainForm : Form
         outerDelivery.Controls.Add(lstDelSources, 0, 4);
         outerDelivery.Controls.Add(delOutputHost, 0, 5);
         var delFormatHost = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 4, BackColor = Theme.Bg, Margin = new Padding(0) };
-        delFormatHost.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45));
         delFormatHost.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55));
+        delFormatHost.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45));
         delFormatHost.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
         delFormatHost.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         delFormatHost.RowStyles.Add(new RowStyle(SizeType.Absolute, 0));
@@ -6964,6 +7214,7 @@ class MainForm : Form
             outerDelivery.PerformLayout();
         };
         setDeliveryProgressVisibility(false);
+        delLogContainer.Visible = false;
 
         // ==================================================================
         // ASSEMBLE TAB CONTROL
@@ -11041,6 +11292,81 @@ class MainForm : Form
                 keys.Add(p);
         }
         return keys.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    private static string NormalizeInspectFingerprint(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+        return value.Replace(" ", "").Trim();
+    }
+
+    private static string NormalizeInspectText(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? string.Empty : value.Trim();
+    }
+
+    private sealed class SenderMatchInfo
+    {
+        public string Status { get; init; } = "UNKNOWN";
+        public string Label { get; init; } = "-";
+    }
+
+    private sealed class TrustedRecipientInfo
+    {
+        public string Name { get; init; } = string.Empty;
+        public string Fingerprint { get; init; } = string.Empty;
+        public string Email { get; init; } = string.Empty;
+        public string Device { get; init; } = string.Empty;
+    }
+
+    private static List<TrustedRecipientInfo> LoadTrustedRecipientInfos()
+    {
+        var results = new List<TrustedRecipientInfo>();
+        string path = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "ObsidianQ",
+            "trusted_recipients_v1.tsv");
+        if (!File.Exists(path)) return results;
+        try
+        {
+            foreach (string line in File.ReadAllLines(path))
+            {
+                if (string.IsNullOrWhiteSpace(line)) continue;
+                string[] parts = line.Split('\t');
+                if (parts.Length < 5) continue;
+                results.Add(new TrustedRecipientInfo
+                {
+                    Name = parts[0].Trim(),
+                    Fingerprint = parts[1].Trim(),
+                    Email = parts.Length > 5 ? parts[5].Trim() : string.Empty,
+                    Device = parts.Length > 6 ? parts[6].Trim() : string.Empty,
+                });
+            }
+        }
+        catch { }
+        return results;
+    }
+
+    private static (string Name, string Email, string Device) LoadLocalIdentityProfile()
+    {
+        string path = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "ObsidianQ",
+            "identity_profile_v1.tsv");
+        if (!File.Exists(path)) return (string.Empty, string.Empty, string.Empty);
+        try
+        {
+            string[] parts = File.ReadAllText(path, Encoding.UTF8).Split('\t');
+            return (
+                parts.Length > 0 ? parts[0].Trim() : string.Empty,
+                parts.Length > 1 ? parts[1].Trim() : string.Empty,
+                parts.Length > 2 ? parts[2].Trim() : string.Empty
+            );
+        }
+        catch
+        {
+            return (string.Empty, string.Empty, string.Empty);
+        }
     }
 
     private sealed class RecipientPickerItem
