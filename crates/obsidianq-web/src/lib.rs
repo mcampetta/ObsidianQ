@@ -14,7 +14,7 @@ use obsidianq_core::delivery::{
     PayloadManifest, RecipientMode, SecureDeliveryManifest, SenderIdentityManifest,
     MANIFEST_FILE_NAME, PAYLOAD_FILE_NAME,
 };
-use obsidianq_core::format::{FileHeader, Mode};
+use obsidianq_core::format::{flags, FileHeader, Mode, SuiteId};
 
 const SFX_MAGIC: &[u8; 8] = b"OBSQSFX1";
 const SFX_TRAILER_LEN: usize = 24;
@@ -32,6 +32,7 @@ struct VerificationView {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct InspectionView {
+    kind: String,
     container_type: String,
     schema_version: u8,
     package_id: Option<String>,
@@ -101,6 +102,10 @@ struct CanonicalSignedManifestV3<'a> {
 
 #[wasm_bindgen]
 pub fn inspect_secure_delivery(bytes: &[u8]) -> Result<JsValue, JsValue> {
+    if looks_like_obsq(bytes) {
+        let inspection = inspect_obsq_bytes(bytes).map_err(js_err)?;
+        return serde_wasm_bindgen::to_value(&inspection).map_err(js_err);
+    }
     let (package_bytes, container_type) = extract_package_bytes(bytes)?;
     let inspection = inspect_package_bytes(package_bytes, container_type).map_err(js_err)?;
     serde_wasm_bindgen::to_value(&inspection).map_err(js_err)
@@ -111,9 +116,16 @@ pub fn decrypt_secure_delivery_to_bundle(bytes: &[u8], password: &str) -> Result
     if password.is_empty() {
         return Err(js_err("Password is required."));
     }
+    if looks_like_obsq(bytes) {
+        return decrypt_payload_bytes(bytes, password.as_bytes()).map_err(map_decrypt_err);
+    }
     let (package_bytes, _) = extract_package_bytes(bytes)?;
     let payload = read_zip_entry_bytes(package_bytes, PAYLOAD_FILE_NAME).map_err(js_err)?;
-    decrypt_payload_bytes(&payload, password.as_bytes()).map_err(js_err)
+    decrypt_payload_bytes(&payload, password.as_bytes()).map_err(map_decrypt_err)
+}
+
+fn looks_like_obsq(bytes: &[u8]) -> bool {
+    bytes.len() >= 4 && &bytes[..4] == b"OBSQ"
 }
 
 fn extract_package_bytes<'a>(bytes: &'a [u8]) -> Result<(&'a [u8], &'static str), JsValue> {
@@ -193,6 +205,7 @@ fn inspect_package_bytes(package_bytes: &[u8], container_type: &str) -> Result<I
     let payload_verification = verify_payload_hash(package_bytes, &manifest);
 
     Ok(InspectionView {
+        kind: "secure_delivery".to_string(),
         container_type: container_type.to_string(),
         schema_version: manifest.schema_version,
         package_id: manifest.package_uuid.clone(),
@@ -206,10 +219,16 @@ fn inspect_package_bytes(package_bytes: &[u8], container_type: &str) -> Result<I
         has_instructions: manifest.options.has_instructions,
         payload_sha256: manifest.payload.integrity.hex.clone(),
         signed: signature_info.signed,
-        signing_identity: sender.as_ref().and_then(|s| s.name.clone()),
+        signing_identity: sender
+            .as_ref()
+            .and_then(|s| s.name.as_deref().map(strip_bom).map(ToOwned::to_owned)),
         signing_fingerprint: sender.as_ref().map(|s| s.fingerprint.clone()),
-        signing_email: sender.as_ref().and_then(|s| s.email.clone()),
-        signing_device: sender.as_ref().and_then(|s| s.device.clone()),
+        signing_email: sender
+            .as_ref()
+            .and_then(|s| s.email.as_deref().map(strip_bom).map(ToOwned::to_owned)),
+        signing_device: sender
+            .as_ref()
+            .and_then(|s| s.device.as_deref().map(strip_bom).map(ToOwned::to_owned)),
         signature_algorithm: manifest.signature.as_ref().map(|s| s.algorithm.clone()),
         files: manifest.files.clone(),
         verification: VerificationView {
@@ -221,6 +240,52 @@ fn inspect_package_bytes(package_bytes: &[u8], container_type: &str) -> Result<I
                 .err()
                 .map(|e| e.to_string())
                 .or(signature_info.error.clone()),
+        },
+    })
+}
+
+fn inspect_obsq_bytes(bytes: &[u8]) -> Result<InspectionView> {
+    let mut cursor = Cursor::new(bytes);
+    let header = FileHeader::read_from(&mut cursor).context("parse file header")?;
+    Ok(InspectionView {
+        kind: "obsq".to_string(),
+        container_type: "Encrypted File (.obsq)".to_string(),
+        schema_version: header.version,
+        package_id: None,
+        created_utc: "-".to_string(),
+        obsidianq_version: None,
+        package_name: "Encrypted file".to_string(),
+        recipient_mode: Some(match header.mode {
+            Mode::Password => "Password".to_string(),
+            Mode::Pqc => "PQC".to_string(),
+        }),
+        package_format: match header.suite {
+            SuiteId::XChaCha20Poly1305 => "XChaCha20-Poly1305".to_string(),
+            SuiteId::Aes256Gcm => "AES-256-GCM".to_string(),
+        },
+        source_item_count: 1,
+        source_total_bytes: bytes.len() as u64,
+        has_instructions: false,
+        payload_sha256: sha256_bytes_hex(bytes),
+        signed: false,
+        signing_identity: None,
+        signing_fingerprint: None,
+        signing_email: None,
+        signing_device: None,
+        signature_algorithm: None,
+        files: Vec::new(),
+        verification: VerificationView {
+            package_signature_valid: false,
+            signing_identity_present: false,
+            contents_match_manifest: true,
+            no_tampering_detected: true,
+            error: if header.flags & flags::COMPRESSED != 0 {
+                Some("Compressed .obsq files are not yet supported in the web PoC.".to_string())
+            } else if matches!(header.mode, Mode::Pqc) {
+                Some("PQC-mode .obsq files are not yet supported in the web PoC.".to_string())
+            } else {
+                None
+            },
         },
     })
 }
@@ -429,8 +494,6 @@ fn decrypt_payload_bytes(payload: &[u8], password: &[u8]) -> Result<Vec<u8>> {
     let mut reader = Cursor::new(payload);
     let mut plain = Vec::new();
     obsidianq_core::decrypt(&master_key, &mut reader, &mut plain).context("decrypt payload")?;
-
-    let _ = ZipArchive::new(Cursor::new(&plain)).context("read plaintext bundle zip")?;
     Ok(plain)
 }
 
@@ -440,4 +503,31 @@ fn sha256_bytes_hex(bytes: &[u8]) -> String {
 
 fn js_err<E: std::fmt::Display>(err: E) -> JsValue {
     JsValue::from_str(&err.to_string())
+}
+
+fn strip_bom(input: &str) -> &str {
+    input.trim_start_matches('\u{feff}')
+}
+
+fn map_decrypt_err<E: std::fmt::Display>(err: E) -> JsValue {
+    let text = err.to_string();
+    if text.contains("HeaderMacFailure")
+        || text.contains("ChunkAuthFailure")
+        || text.contains("FooterMacFailure")
+        || text.contains("AEAD")
+        || text.contains("decrypt payload")
+    {
+        return JsValue::from_str("Incorrect password or unsupported encrypted file.");
+    }
+    if text.contains("this PoC only supports password-mode payloads") {
+        return JsValue::from_str(
+            "This file uses a mode that is not yet supported in the web PoC.",
+        );
+    }
+    if text.contains("compressed payloads are not supported in wasm builds")
+        || text.contains("Compressed .obsq files are not yet supported")
+    {
+        return JsValue::from_str("Compressed files are not yet supported in the web PoC.");
+    }
+    JsValue::from_str(&text)
 }
