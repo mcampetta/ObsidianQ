@@ -71,29 +71,30 @@ app.innerHTML = `
         decrypt locally without running a desktop executable.
       </p>
       <div class="trust-note">
-        <strong>Local only:</strong> files stay in your browser session. This page does not upload
-        package contents or your password to an ObsidianQ server.
+        <strong>Local only:</strong> files stay in your browser session. Nothing is uploaded.
       </div>
     </section>
 
-    <section class="grid">
-      <div class="card drop-card">
-        <div id="dropzone" class="dropzone">
-          <div>
-            <p class="drop-title">Drop package here</p>
-            <p class="drop-subtitle">Supported in this PoC: Secure Delivery ZIP, self-extracting EXE package, and password-mode .obsq files</p>
-            <button id="pickButton" class="button secondary" type="button">Choose File</button>
-            <input id="fileInput" type="file" hidden />
+      <section class="grid">
+        <div id="dropCard" class="card drop-card">
+          <div id="dropzone" class="dropzone">
+            <div>
+              <p id="dropTitle" class="drop-title">Drop package here</p>
+              <p id="dropSubtitle" class="drop-subtitle">Supported in this PoC: Secure Delivery ZIP, self-extracting EXE package, and password-mode .obsq files</p>
+              <p id="loadedFileName" class="loaded-file hidden"></p>
+              <p id="loadedFileHint" class="loaded-hint hidden">Ready to inspect and decrypt.</p>
+              <button id="pickButton" class="button secondary" type="button">Choose File</button>
+              <input id="fileInput" type="file" hidden />
+            </div>
           </div>
+          <p id="status" class="status">Waiting for a package.</p>
         </div>
-        <p id="status" class="status">Waiting for a package.</p>
-      </div>
 
-      <div class="card action-card">
-        <div class="sample-box">
-          <p class="sample-title">Need a test package?</p>
-          <p class="sample-copy">
-            <a class="sample-link" href="./WebDecryptSample_v2_SecureDelivery.zip">Download sample package</a>
+        <div id="actionCard" class="card action-card">
+          <div id="sampleBox" class="sample-box">
+            <p class="sample-title">Need a test package?</p>
+            <p class="sample-copy">
+              <a class="sample-link" href="./WebDecryptSample_v2_SecureDelivery.zip">Download sample package</a>
             <span>Password: <code>obsidianq-demo</code></span>
           </p>
         </div>
@@ -137,9 +138,16 @@ app.innerHTML = `
   </main>
 `;
 
+const dropCard = document.querySelector<HTMLElement>("#dropCard")!;
+const actionCard = document.querySelector<HTMLElement>("#actionCard")!;
 const dropzone = document.querySelector<HTMLDivElement>("#dropzone")!;
+const dropTitle = document.querySelector<HTMLElement>("#dropTitle")!;
+const dropSubtitle = document.querySelector<HTMLElement>("#dropSubtitle")!;
+const loadedFileName = document.querySelector<HTMLElement>("#loadedFileName")!;
+const loadedFileHint = document.querySelector<HTMLElement>("#loadedFileHint")!;
 const fileInput = document.querySelector<HTMLInputElement>("#fileInput")!;
 const pickButton = document.querySelector<HTMLButtonElement>("#pickButton")!;
+const sampleBox = document.querySelector<HTMLElement>("#sampleBox")!;
 const passwordInput = document.querySelector<HTMLInputElement>("#passwordInput")!;
 const decryptButton = document.querySelector<HTMLButtonElement>("#decryptButton")!;
 const postDecryptActions = document.querySelector<HTMLElement>("#postDecryptActions")!;
@@ -249,10 +257,11 @@ async function loadFile(file: File): Promise<void> {
     lastRawOutput = null;
     decryptButton.disabled = false;
     downloadBundleButton.disabled = true;
-    updateDownloadButtonLabel(inspection);
-    postDecryptActions.classList.add("hidden");
-    decryptedCard.classList.add("hidden");
-    fileNameLabel.textContent = file.name;
+      updateDownloadButtonLabel(inspection);
+      postDecryptActions.classList.add("hidden");
+      decryptedCard.classList.add("hidden");
+      setLoadedState(file.name);
+      fileNameLabel.textContent = file.name;
     outputEl.textContent = renderInspection(file.name, inspection);
     clearDecryptedPane();
     setStatus(inspection.verification.error ?? "Package inspection complete.", Boolean(inspection.verification.error));
@@ -264,10 +273,11 @@ async function loadFile(file: File): Promise<void> {
     lastRawOutput = null;
     decryptButton.disabled = true;
     downloadBundleButton.disabled = true;
-    updateDownloadButtonLabel(null);
-    postDecryptActions.classList.add("hidden");
-    decryptedCard.classList.add("hidden");
-    fileNameLabel.textContent = "No file loaded";
+      updateDownloadButtonLabel(null);
+      postDecryptActions.classList.add("hidden");
+      decryptedCard.classList.add("hidden");
+      clearLoadedState();
+      fileNameLabel.textContent = "No file loaded";
     outputEl.textContent = "Drop a package to inspect it.";
     clearDecryptedPane();
     setStatus(asMessage(error), true);
@@ -519,6 +529,32 @@ function defaultObsqOutputName(input: string): string {
     return "decrypted-output";
   }
   return stripped;
+}
+
+function setLoadedState(fileName: string): void {
+  dropCard.classList.add("loaded");
+  actionCard.classList.add("loaded");
+  dropzone.classList.add("loaded");
+  sampleBox.classList.add("hidden");
+  dropTitle.textContent = "Package loaded";
+  dropSubtitle.classList.add("hidden");
+  loadedFileName.textContent = fileName;
+  loadedFileName.classList.remove("hidden");
+  loadedFileHint.classList.remove("hidden");
+  pickButton.textContent = "Choose Different File";
+}
+
+function clearLoadedState(): void {
+  dropCard.classList.remove("loaded");
+  actionCard.classList.remove("loaded");
+  dropzone.classList.remove("loaded");
+  sampleBox.classList.remove("hidden");
+  dropTitle.textContent = "Drop package here";
+  dropSubtitle.classList.remove("hidden");
+  loadedFileName.textContent = "";
+  loadedFileName.classList.add("hidden");
+  loadedFileHint.classList.add("hidden");
+  pickButton.textContent = "Choose File";
 }
 
 function setStatus(message: string, isError = false): void {
