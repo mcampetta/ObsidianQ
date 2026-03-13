@@ -191,6 +191,23 @@ input {
   cursor: not-allowed;
 }
 
+.post-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(93, 211, 158, 0.18);
+  border-radius: 12px;
+  background: rgba(8, 16, 12, 0.55);
+}
+
+.post-actions-label {
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
 .section-head {
   display: flex;
   justify-content: space-between;
@@ -386,6 +403,11 @@ input {
 
   .section-head {
     align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .post-actions {
+    align-items: stretch;
     flex-direction: column;
   }
 

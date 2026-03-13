@@ -98,7 +98,10 @@ app.innerHTML = `
           <input id="passwordInput" type="password" placeholder="Enter package password" />
         </label>
         <button id="decryptButton" class="button" type="button" disabled>Decrypt</button>
-        <button id="downloadBundleButton" class="button secondary" type="button" disabled>Download Decrypted Output</button>
+        <div id="postDecryptActions" class="post-actions hidden">
+          <span class="post-actions-label">Decryption complete.</span>
+          <button id="downloadBundleButton" class="mini-button" type="button" disabled>Download Decrypted Output</button>
+        </div>
         <p class="hint">
           Secure Delivery packages are unpacked in-browser after decryption so you can download
           individual files. Password-mode <code>.obsq</code> files decrypt directly to the original file output.
@@ -135,6 +138,7 @@ const fileInput = document.querySelector<HTMLInputElement>("#fileInput")!;
 const pickButton = document.querySelector<HTMLButtonElement>("#pickButton")!;
 const passwordInput = document.querySelector<HTMLInputElement>("#passwordInput")!;
 const decryptButton = document.querySelector<HTMLButtonElement>("#decryptButton")!;
+const postDecryptActions = document.querySelector<HTMLElement>("#postDecryptActions")!;
 const downloadBundleButton = document.querySelector<HTMLButtonElement>("#downloadBundleButton")!;
 const statusEl = document.querySelector<HTMLParagraphElement>("#status")!;
 const outputEl = document.querySelector<HTMLElement>("#inspectionOutput")!;
@@ -174,15 +178,17 @@ async function bootstrap(): Promise<void> {
     decryptButton.disabled = true;
     setStatus("Decrypting in browser...");
     try {
-    const rawOutput = decrypt_secure_delivery_to_bundle(state.bytes, password);
+      const rawOutput = decrypt_secure_delivery_to_bundle(state.bytes, password);
       lastRawOutput = rawOutput;
       downloadBundleButton.disabled = false;
       updateDownloadButtonLabel(state.inspection);
+      postDecryptActions.classList.remove("hidden");
       await hydrateDecryptedOutput(rawOutput, state.inspection, state.fileName);
       setStatus("Decryption complete.");
     } catch (error) {
       lastRawOutput = null;
       downloadBundleButton.disabled = true;
+      postDecryptActions.classList.add("hidden");
       clearDecryptedPane();
       setStatus(asMessage(error), true);
     } finally {
@@ -238,6 +244,7 @@ async function loadFile(file: File): Promise<void> {
     decryptButton.disabled = false;
     downloadBundleButton.disabled = true;
     updateDownloadButtonLabel(inspection);
+    postDecryptActions.classList.add("hidden");
     fileNameLabel.textContent = file.name;
     outputEl.textContent = renderInspection(file.name, inspection);
     clearDecryptedPane();
@@ -251,6 +258,7 @@ async function loadFile(file: File): Promise<void> {
     decryptButton.disabled = true;
     downloadBundleButton.disabled = true;
     updateDownloadButtonLabel(null);
+    postDecryptActions.classList.add("hidden");
     fileNameLabel.textContent = "No file loaded";
     outputEl.textContent = "Drop a package to inspect it.";
     clearDecryptedPane();
