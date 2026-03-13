@@ -1,0 +1,55 @@
+(function(){const e=document.createElement("link").relList;if(e&&e.supports&&e.supports("modulepreload"))return;for(const r of document.querySelectorAll('link[rel="modulepreload"]'))i(r);new MutationObserver(r=>{for(const a of r)if(a.type==="childList")for(const s of a.addedNodes)s.tagName==="LINK"&&s.rel==="modulepreload"&&i(s)}).observe(document,{childList:!0,subtree:!0});function n(r){const a={};return r.integrity&&(a.integrity=r.integrity),r.referrerPolicy&&(a.referrerPolicy=r.referrerPolicy),r.crossOrigin==="use-credentials"?a.credentials="include":r.crossOrigin==="anonymous"?a.credentials="omit":a.credentials="same-origin",a}function i(r){if(r.ep)return;r.ep=!0;const a=n(r);fetch(r.href,a)}})();function W(t,e){try{const c=o.__wbindgen_add_to_stack_pointer(-16),f=N(t,o.__wbindgen_export),M=_,R=T(e,o.__wbindgen_export,o.__wbindgen_export2),q=_;o.decrypt_secure_delivery_to_bundle(c,f,M,R,q);var n=l().getInt32(c+0,!0),i=l().getInt32(c+4,!0),r=l().getInt32(c+8,!0),a=l().getInt32(c+12,!0);if(a)throw b(r);var s=z(n,i).slice();return o.__wbindgen_export3(n,i*1,1),s}finally{o.__wbindgen_add_to_stack_pointer(16)}}function j(t){try{const r=o.__wbindgen_add_to_stack_pointer(-16),a=N(t,o.__wbindgen_export),s=_;o.inspect_secure_delivery(r,a,s);var e=l().getInt32(r+0,!0),n=l().getInt32(r+4,!0),i=l().getInt32(r+8,!0);if(i)throw b(n);return b(e)}finally{o.__wbindgen_add_to_stack_pointer(16)}}function U(){return{__proto__:null,"./obsidianq_web_bg.js":{__proto__:null,__wbg_Error_4577686b3a6d9b3a:function(e,n){const i=Error(E(e,n));return p(i)},__wbg_String_8564e559799eccda:function(e,n){const i=String(v(n)),r=T(i,o.__wbindgen_export,o.__wbindgen_export2),a=_;l().setInt32(e+4,a,!0),l().setInt32(e+0,r,!0)},__wbg___wbindgen_throw_39bc967c0e5a9b58:function(e,n){throw new Error(E(e,n))},__wbg_new_cbee8c0d5c479eac:function(){const e=new Array;return p(e)},__wbg_new_ed69e637b553a997:function(){const e=new Object;return p(e)},__wbg_set_4c81cfb5dc3a333c:function(e,n,i){v(e)[n>>>0]=b(i)},__wbg_set_6be42768c690e380:function(e,n,i){v(e)[b(n)]=b(i)},__wbindgen_cast_0000000000000001:function(e){return p(e)},__wbindgen_cast_0000000000000002:function(e,n){const i=E(e,n);return p(i)},__wbindgen_cast_0000000000000003:function(e){const n=BigInt.asUintN(64,e);return p(n)},__wbindgen_object_clone_ref:function(e){const n=v(e);return p(n)},__wbindgen_object_drop_ref:function(e){b(e)}}}}function p(t){S===u.length&&u.push(u.length+1);const e=S;return S=u[e],u[e]=t,e}function F(t){t<1028||(u[t]=S,S=t)}function z(t,e){return t=t>>>0,m().subarray(t/1,t/1+e)}let g=null;function l(){return(g===null||g.buffer.detached===!0||g.buffer.detached===void 0&&g.buffer!==o.memory.buffer)&&(g=new DataView(o.memory.buffer)),g}function E(t,e){return t=t>>>0,X(t,e)}let h=null;function m(){return(h===null||h.byteLength===0)&&(h=new Uint8Array(o.memory.buffer)),h}function v(t){return u[t]}let u=new Array(1024).fill(void 0);u.push(void 0,null,!0,!1);let S=u.length;function N(t,e){const n=e(t.length*1,1)>>>0;return m().set(t,n/1),_=t.length,n}function T(t,e,n){if(n===void 0){const c=I.encode(t),f=e(c.length,1)>>>0;return m().subarray(f,f+c.length).set(c),_=c.length,f}let i=t.length,r=e(i,1)>>>0;const a=m();let s=0;for(;s<i;s++){const c=t.charCodeAt(s);if(c>127)break;a[r+s]=c}if(s!==i){s!==0&&(t=t.slice(s)),r=n(r,i,i=s+t.length*3,1)>>>0;const c=m().subarray(r+s,r+i),f=I.encodeInto(t,c);s+=f.written,r=n(r,i,s,1)>>>0}return _=s,r}function b(t){const e=v(t);return F(t),e}let D=new TextDecoder("utf-8",{ignoreBOM:!0,fatal:!0});D.decode();const V=2146435072;let P=0;function X(t,e){return P+=e,P>=V&&(D=new TextDecoder("utf-8",{ignoreBOM:!0,fatal:!0}),D.decode(),P=e),D.decode(m().subarray(t,t+e))}const I=new TextEncoder;"encodeInto"in I||(I.encodeInto=function(t,e){const n=I.encode(t);return e.set(n),{read:t.length,written:n.length}});let _=0,o;function Z(t,e){return o=t.exports,g=null,h=null,o}async function H(t,e){if(typeof Response=="function"&&t instanceof Response){if(typeof WebAssembly.instantiateStreaming=="function")try{return await WebAssembly.instantiateStreaming(t,e)}catch(r){if(t.ok&&n(t.type)&&t.headers.get("Content-Type")!=="application/wasm")console.warn("`WebAssembly.instantiateStreaming` failed because your server does not serve Wasm with `application/wasm` MIME type. Falling back to `WebAssembly.instantiate` which is slower. Original error:\n",r);else throw r}const i=await t.arrayBuffer();return await WebAssembly.instantiate(i,e)}else{const i=await WebAssembly.instantiate(t,e);return i instanceof WebAssembly.Instance?{instance:i,module:t}:i}function n(i){switch(i){case"basic":case"cors":case"default":return!0}return!1}}async function Q(t){if(o!==void 0)return o;t!==void 0&&(Object.getPrototypeOf(t)===Object.prototype?{module_or_path:t}=t:console.warn("using deprecated parameters for the initialization function; pass a single object instead")),t===void 0&&(t=new URL(""+new URL("obsidianq_web_bg-DvjQhQ8h.wasm",import.meta.url).href,import.meta.url));const e=U();(typeof t=="string"||typeof Request=="function"&&t instanceof Request||typeof URL=="function"&&t instanceof URL)&&(t=fetch(t));const{instance:n,module:i}=await H(await t,e);return Z(n)}const d={bytes:null,fileName:"",inspection:null},C=document.querySelector("#app");if(!C)throw new Error("Missing app root.");C.innerHTML=`
+  <main class="shell">
+    <section class="hero">
+      <p class="eyebrow">ObsidianQ Web Decrypt PoC</p>
+      <h1>Inspect and decrypt Secure Delivery packages in the browser.</h1>
+      <p class="lede">
+        This proof of concept runs entirely client-side. Drop a Secure Delivery ZIP or
+        self-extracting EXE package, inspect the metadata, then decrypt to a plaintext
+        bundle ZIP without running a local executable.
+      </p>
+    </section>
+
+    <section class="grid">
+      <div class="card drop-card">
+        <div id="dropzone" class="dropzone">
+          <div>
+            <p class="drop-title">Drop package here</p>
+            <p class="drop-subtitle">Supported in this PoC: Secure Delivery ZIP and self-extracting EXE package</p>
+            <button id="pickButton" class="button secondary" type="button">Choose File</button>
+            <input id="fileInput" type="file" hidden />
+          </div>
+        </div>
+        <p id="status" class="status">Waiting for a package.</p>
+      </div>
+
+      <div class="card action-card">
+        <div class="sample-box">
+          <p class="sample-title">Need a test package?</p>
+          <p class="sample-copy">
+            <a class="sample-link" href="./WebDecryptSample_SecureDelivery.zip">Download sample package</a>
+            <span>Password: <code>obsidianq-demo</code></span>
+          </p>
+        </div>
+        <label class="field">
+          <span>Password</span>
+          <input id="passwordInput" type="password" placeholder="Enter package password" />
+        </label>
+        <button id="decryptButton" class="button" type="button" disabled>Decrypt To Bundle ZIP</button>
+        <p class="hint">
+          Current output is the decrypted plaintext bundle ZIP. Direct file extraction and
+          single-file <code>.obsq</code> support can be layered in after this PoC.
+        </p>
+      </div>
+    </section>
+
+    <section class="card results-card">
+      <div class="section-head">
+        <h2>Package Inspection</h2>
+        <span id="fileNameLabel" class="chip">No file loaded</span>
+      </div>
+      <pre id="inspectionOutput" class="output">Drop a package to inspect it.</pre>
+    </section>
+  </main>
+`;const w=document.querySelector("#dropzone"),x=document.querySelector("#fileInput"),K=document.querySelector("#pickButton"),Y=document.querySelector("#passwordInput"),k=document.querySelector("#decryptButton"),L=document.querySelector("#status"),$=document.querySelector("#inspectionOutput"),O=document.querySelector("#fileNameLabel");G();async function G(){await Q(),K.addEventListener("click",()=>x.click()),x.addEventListener("change",async()=>{const t=x.files?.[0];t&&await A(t)}),k.addEventListener("click",async()=>{if(!d.bytes||!d.inspection)return;const t=Y.value;if(!t){y("Password is required.",!0);return}k.disabled=!0,y("Decrypting package in browser...");try{const e=W(d.bytes,t),n=`${te(d.inspection.packageName||d.fileName)}_decrypted_bundle.zip`;ee(e,n,"application/zip"),y("Decryption complete. Plaintext bundle ZIP downloaded.")}catch(e){y(B(e),!0)}finally{k.disabled=!1}});for(const t of["dragenter","dragover"])w.addEventListener(t,e=>{e.preventDefault(),w.classList.add("active")});for(const t of["dragleave","drop"])w.addEventListener(t,e=>{e.preventDefault(),w.classList.remove("active")});w.addEventListener("drop",async t=>{const e=t.dataTransfer?.files?.[0];e&&await A(e)})}async function A(t){y("Reading package...");const e=new Uint8Array(await t.arrayBuffer());try{const n=j(e);d.bytes=e,d.fileName=t.name,d.inspection=n,k.disabled=!1,O.textContent=t.name,$.textContent=J(t.name,n),y("Package inspection complete.")}catch(n){d.bytes=null,d.fileName="",d.inspection=null,k.disabled=!0,O.textContent="No file loaded",$.textContent="Drop a package to inspect it.",y(B(n),!0)}}function J(t,e){const n=[`Path: ${t}`,`Container: ${e.containerType}`,`Schema version: ${e.schemaVersion}`,`Package ID: ${e.packageId??"-"}`,`Created: ${e.createdUtc}`,`Created by version: ${e.obsidianqVersion??"-"}`,`Package name: ${e.packageName}`,`Recipient mode: ${e.recipientMode??"-"}`,`Package format: ${e.packageFormat}`,`Source item count: ${e.sourceItemCount}`,`Source total bytes: ${e.sourceTotalBytes}`,`Has instructions: ${e.hasInstructions}`,`Payload SHA-256: ${e.payloadSha256}`,`Signed: ${e.signed}`,`Signing identity: ${e.signingIdentity??"-"}`,`Signing fingerprint: ${e.signingFingerprint??"-"}`,`Signature algorithm: ${e.signatureAlgorithm??"-"}`,""];if(e.files.length>0){n.push("Files:");for(const i of e.files)n.push(`- ${i.path}`);n.push("")}return n.push("Verification:"),n.push(`${e.verification.packageSignatureValid?"✓":"X"} ${e.signed?"Package signature valid":"Package is not signed"}`),n.push(`${e.verification.signingIdentityPresent?"✓":"X"} ${e.verification.signingIdentityPresent?"Signing identity present":"Signing identity missing"}`),n.push(`${e.verification.contentsMatchManifest?"✓":"X"} ${e.verification.contentsMatchManifest?"Contents match manifest":"Contents do not match manifest"}`),n.push(`${e.verification.noTamperingDetected?"✓":"X"} ${e.verification.noTamperingDetected?"No tampering detected":"Tampering or verification failure detected"}`),e.verification.error&&(n.push(""),n.push(`Error: ${e.verification.error}`)),n.join(`
+`)}function ee(t,e,n){const i=new Blob([t],{type:n}),r=URL.createObjectURL(i),a=document.createElement("a");a.href=r,a.download=e,document.body.append(a),a.click(),a.remove(),URL.revokeObjectURL(r)}function te(t){const e=t.trim();return e?e.replace(/[<>:"/\\|?*]+/g,"_"):"package"}function y(t,e=!1){L.textContent=t,L.classList.toggle("error",e)}function B(t){return t instanceof Error?t.message:String(t)}

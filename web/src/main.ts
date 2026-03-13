@@ -75,6 +75,13 @@ app.innerHTML = `
       </div>
 
       <div class="card action-card">
+        <div class="sample-box">
+          <p class="sample-title">Need a test package?</p>
+          <p class="sample-copy">
+            <a class="sample-link" href="./WebDecryptSample_SecureDelivery.zip">Download sample package</a>
+            <span>Password: <code>obsidianq-demo</code></span>
+          </p>
+        </div>
         <label class="field">
           <span>Password</span>
           <input id="passwordInput" type="password" placeholder="Enter package password" />
