@@ -1,4 +1,4 @@
-# ObsidianQ Web Decrypt PoC
+# ObsidianQ Web Decrypt
 
 This is a static, GitHub Pages-friendly proof of concept for inspecting and decrypting Secure Delivery packages in the browser.
 

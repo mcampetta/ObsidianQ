@@ -63,7 +63,7 @@ if (!app) {
 app.innerHTML = `
   <main class="shell">
     <section class="hero">
-      <p class="eyebrow">ObsidianQ Web Decrypt PoC</p>
+      <p class="eyebrow">ObsidianQ Web Decrypt</p>
       <h1>Inspect and decrypt Secure Delivery packages in the browser.</h1>
       <p class="lede">
         This proof of concept runs entirely client-side. Drop a Secure Delivery ZIP,
@@ -77,7 +77,7 @@ app.innerHTML = `
           <div id="dropzone" class="dropzone">
             <div>
               <p id="dropTitle" class="drop-title">Drop package here</p>
-              <p id="dropSubtitle" class="drop-subtitle">Supported in this PoC: Secure Delivery ZIP, self-extracting EXE package, and password-mode .obsq files</p>
+              <p id="dropSubtitle" class="drop-subtitle">Supports Secure Delivery ZIP, self-extracting EXE packages, and password-mode .obsq files.</p>
               <p id="loadedFileName" class="loaded-file hidden"></p>
               <p id="loadedFileHint" class="loaded-hint hidden">Ready to inspect and decrypt.</p>
               <div class="drop-actions">
