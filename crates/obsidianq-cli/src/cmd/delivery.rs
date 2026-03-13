@@ -1571,6 +1571,15 @@ mod tests {
     }
 
     #[test]
+    fn clean_meta_strips_utf8_bom() {
+        assert_eq!(clean_meta("\u{feff}Martin"), Some("Martin".to_string()));
+        assert_eq!(
+            clean_meta("  \u{feff}martin@example.com  "),
+            Some("martin@example.com".to_string())
+        );
+    }
+
+    #[test]
     fn create_and_verify_manifest_roundtrip() {
         let td = tempfile::tempdir().expect("tmp");
         let in_file = td.path().join("hello.txt");

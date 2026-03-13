@@ -57,6 +57,21 @@ h1 {
   line-height: 1.6;
 }
 
+.trust-note {
+  max-width: 760px;
+  margin-top: 16px;
+  padding: 14px 16px;
+  border: 1px solid rgba(93, 211, 158, 0.2);
+  border-radius: 14px;
+  background: rgba(8, 16, 12, 0.58);
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.trust-note strong {
+  color: var(--text);
+}
+
 .grid {
   display: grid;
   grid-template-columns: 1.6fr 1fr;
@@ -363,6 +378,14 @@ input {
   max-width: 100%;
   max-height: 480px;
   object-fit: contain;
+  border-radius: 12px;
+  background: rgba(5, 10, 8, 0.8);
+}
+
+.preview-pdf {
+  width: 100%;
+  min-height: 560px;
+  border: 0;
   border-radius: 12px;
   background: rgba(5, 10, 8, 0.8);
 }

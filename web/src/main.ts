@@ -39,7 +39,7 @@ type DecryptedEntry = {
   path: string;
   data: Uint8Array;
   mime: string;
-  kind: "text" | "image" | "binary";
+  kind: "text" | "image" | "pdf" | "binary";
 };
 
 const state: {
@@ -70,6 +70,10 @@ app.innerHTML = `
         self-extracting EXE package, or a password-mode <code>.obsq</code> file to inspect it and
         decrypt locally without running a desktop executable.
       </p>
+      <div class="trust-note">
+        <strong>Local only:</strong> files stay in your browser session. This page does not upload
+        package contents or your password to an ObsidianQ server.
+      </div>
     </section>
 
     <section class="grid">
@@ -363,6 +367,13 @@ function renderPreview(entry: DecryptedEntry): void {
     return;
   }
 
+  if (entry.kind === "pdf") {
+    const url = URL.createObjectURL(new Blob([entry.data], { type: entry.mime }));
+    activePreviewUrl = url;
+    previewPane.innerHTML = `${header}<iframe class="preview-pdf" src="${url}" title="${escapeHtml(entry.path)}"></iframe>`;
+    return;
+  }
+
   previewPane.innerHTML = `
     ${header}
     <div class="preview-binary">
@@ -410,6 +421,9 @@ function makeEntry(path: string, data: Uint8Array): DecryptedEntry {
                 : "image/jpeg",
       kind: "image"
     };
+  }
+  if (lower.endsWith(".pdf")) {
+    return { path, data, mime: "application/pdf", kind: "pdf" };
   }
   return { path, data, mime: "application/octet-stream", kind: "binary" };
 }
