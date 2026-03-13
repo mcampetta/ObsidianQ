@@ -264,6 +264,7 @@ input {
 .post-actions-label {
   color: var(--muted);
   font-size: 0.92rem;
+  white-space: nowrap;
 }
 
 .section-head {
@@ -386,6 +387,7 @@ input {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .preview-pane {

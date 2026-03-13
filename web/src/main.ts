@@ -104,8 +104,8 @@ app.innerHTML = `
           </label>
           <button id="decryptButton" class="button" type="button" disabled>Decrypt</button>
           <div id="postDecryptActions" class="post-actions hidden">
-            <span class="post-actions-label">Decryption complete.</span>
-            <button id="downloadBundleButton" class="mini-button" type="button" disabled>Download Decrypted Output</button>
+            <span class="post-actions-label">Ready</span>
+            <button id="downloadBundleButton" class="mini-button" type="button" disabled>Download</button>
           </div>
           <p class="hint">
             Secure Delivery packages are unpacked in-browser after decryption so you can download
@@ -505,12 +505,12 @@ function downloadBytes(bytes: Uint8Array, fileName: string, mimeType: string): v
 
 function updateDownloadButtonLabel(inspection: Inspection | null): void {
   if (!inspection) {
-    downloadBundleButton.textContent = "Download Decrypted Output";
+    downloadBundleButton.textContent = "Download";
     return;
   }
   downloadBundleButton.textContent = inspection.kind === "obsq"
-    ? "Download Decrypted File"
-    : "Download Decrypted ZIP";
+    ? "Download File"
+    : "Download ZIP";
 }
 
 function sanitizeBaseName(input: string): string {
