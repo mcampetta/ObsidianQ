@@ -80,7 +80,10 @@ app.innerHTML = `
               <p id="dropSubtitle" class="drop-subtitle">Supported in this PoC: Secure Delivery ZIP, self-extracting EXE package, and password-mode .obsq files</p>
               <p id="loadedFileName" class="loaded-file hidden"></p>
               <p id="loadedFileHint" class="loaded-hint hidden">Ready to inspect and decrypt.</p>
-              <button id="pickButton" class="button secondary" type="button">Choose File</button>
+              <div class="drop-actions">
+                <button id="pickButton" class="button secondary" type="button">Choose File</button>
+                <button id="clearButton" class="ghost-button hidden" type="button">Clear</button>
+              </div>
               <input id="fileInput" type="file" hidden />
             </div>
           </div>
@@ -144,6 +147,7 @@ const loadedFileName = document.querySelector<HTMLElement>("#loadedFileName")!;
 const loadedFileHint = document.querySelector<HTMLElement>("#loadedFileHint")!;
 const fileInput = document.querySelector<HTMLInputElement>("#fileInput")!;
 const pickButton = document.querySelector<HTMLButtonElement>("#pickButton")!;
+const clearButton = document.querySelector<HTMLButtonElement>("#clearButton")!;
 const sampleBox = document.querySelector<HTMLElement>("#sampleBox")!;
 const passwordInput = document.querySelector<HTMLInputElement>("#passwordInput")!;
 const decryptButton = document.querySelector<HTMLButtonElement>("#decryptButton")!;
@@ -174,6 +178,7 @@ async function bootstrap(): Promise<void> {
       await loadFile(file);
     }
   });
+  clearButton.addEventListener("click", clearLoadedPackage);
 
   decryptButton.addEventListener("click", async () => {
     if (!state.bytes || !state.inspection) {
@@ -539,6 +544,7 @@ function setLoadedState(fileName: string): void {
   loadedFileName.classList.remove("hidden");
   loadedFileHint.classList.remove("hidden");
   pickButton.textContent = "Choose Different File";
+  clearButton.classList.remove("hidden");
 }
 
 function clearLoadedState(): void {
@@ -552,6 +558,26 @@ function clearLoadedState(): void {
   loadedFileName.classList.add("hidden");
   loadedFileHint.classList.add("hidden");
   pickButton.textContent = "Choose File";
+  clearButton.classList.add("hidden");
+}
+
+function clearLoadedPackage(): void {
+  state.bytes = null;
+  state.fileName = "";
+  state.inspection = null;
+  state.decryptedEntries = [];
+  lastRawOutput = null;
+  decryptButton.disabled = true;
+  downloadBundleButton.disabled = true;
+  updateDownloadButtonLabel(null);
+  postDecryptActions.classList.add("hidden");
+  fileInput.value = "";
+  passwordInput.value = "";
+  fileNameLabel.textContent = "No file loaded";
+  outputEl.textContent = "Drop a package to inspect it.";
+  clearLoadedState();
+  clearDecryptedPane();
+  setStatus("Waiting for a package.");
 }
 
 function setStatus(message: string, isError = false): void {

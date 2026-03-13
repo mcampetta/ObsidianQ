@@ -126,6 +126,13 @@ h1 {
   color: var(--muted);
 }
 
+.drop-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .drop-subtitle,
 .hint,
 .status {
@@ -224,6 +231,22 @@ input {
 .button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.ghost-button {
+  appearance: none;
+  border: 0;
+  padding: 8px 2px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.86rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.ghost-button:hover {
+  color: var(--text);
 }
 
 .post-actions {
