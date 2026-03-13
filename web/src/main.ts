@@ -98,7 +98,7 @@ app.innerHTML = `
           <input id="passwordInput" type="password" placeholder="Enter package password" />
         </label>
         <button id="decryptButton" class="button" type="button" disabled>Decrypt</button>
-        <button id="downloadBundleButton" class="button secondary" type="button" disabled>Download Raw Decrypted Output</button>
+        <button id="downloadBundleButton" class="button secondary" type="button" disabled>Download Decrypted Output</button>
         <p class="hint">
           Secure Delivery packages are unpacked in-browser after decryption so you can download
           individual files. Password-mode <code>.obsq</code> files decrypt directly to the original file output.
@@ -174,9 +174,10 @@ async function bootstrap(): Promise<void> {
     decryptButton.disabled = true;
     setStatus("Decrypting in browser...");
     try {
-      const rawOutput = decrypt_secure_delivery_to_bundle(state.bytes, password);
+    const rawOutput = decrypt_secure_delivery_to_bundle(state.bytes, password);
       lastRawOutput = rawOutput;
       downloadBundleButton.disabled = false;
+      updateDownloadButtonLabel(state.inspection);
       await hydrateDecryptedOutput(rawOutput, state.inspection, state.fileName);
       setStatus("Decryption complete.");
     } catch (error) {
@@ -194,9 +195,11 @@ async function bootstrap(): Promise<void> {
       return;
     }
     const outName = state.inspection.kind === "obsq"
-      ? `${sanitizeBaseName(stripObsQExtension(state.fileName))}_decrypted.bin`
+      ? defaultObsqOutputName(state.fileName)
       : `${sanitizeBaseName(state.inspection.packageName || state.fileName)}_decrypted_bundle.zip`;
-    const mime = state.inspection.kind === "obsq" ? "application/octet-stream" : "application/zip";
+    const mime = state.inspection.kind === "obsq"
+      ? makeEntry(outName, lastRawOutput).mime
+      : "application/zip";
     downloadBytes(lastRawOutput, outName, mime);
   });
 
@@ -234,6 +237,7 @@ async function loadFile(file: File): Promise<void> {
     lastRawOutput = null;
     decryptButton.disabled = false;
     downloadBundleButton.disabled = true;
+    updateDownloadButtonLabel(inspection);
     fileNameLabel.textContent = file.name;
     outputEl.textContent = renderInspection(file.name, inspection);
     clearDecryptedPane();
@@ -246,6 +250,7 @@ async function loadFile(file: File): Promise<void> {
     lastRawOutput = null;
     decryptButton.disabled = true;
     downloadBundleButton.disabled = true;
+    updateDownloadButtonLabel(null);
     fileNameLabel.textContent = "No file loaded";
     outputEl.textContent = "Drop a package to inspect it.";
     clearDecryptedPane();
@@ -459,6 +464,16 @@ function downloadBytes(bytes: Uint8Array, fileName: string, mimeType: string): v
   URL.revokeObjectURL(url);
 }
 
+function updateDownloadButtonLabel(inspection: Inspection | null): void {
+  if (!inspection) {
+    downloadBundleButton.textContent = "Download Decrypted Output";
+    return;
+  }
+  downloadBundleButton.textContent = inspection.kind === "obsq"
+    ? "Download Decrypted File"
+    : "Download Decrypted ZIP";
+}
+
 function sanitizeBaseName(input: string): string {
   const trimmed = input.trim();
   if (!trimmed) {
@@ -469,6 +484,14 @@ function sanitizeBaseName(input: string): string {
 
 function stripObsQExtension(input: string): string {
   return input.replace(/\.obsq$/i, "");
+}
+
+function defaultObsqOutputName(input: string): string {
+  const stripped = sanitizeBaseName(stripObsQExtension(input));
+  if (!stripped) {
+    return "decrypted-output";
+  }
+  return stripped;
 }
 
 function setStatus(message: string, isError = false): void {
