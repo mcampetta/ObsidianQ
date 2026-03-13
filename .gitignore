@@ -50,3 +50,6 @@ tools/winfsp_layout_probe.exe
 tools/winfsp_layout_probe.c
 /tools/relay-server/target/
 /tools/relay-server/
+/web/node_modules/
+/web/pkg/
+/web/dist/

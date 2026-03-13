@@ -3,6 +3,7 @@ members = [
     "crates/obsidianq-core",
     "crates/obsidianq-vault",
     "crates/obsidianq-cli",
+    "crates/obsidianq-web",
     "crates/obsidianq-bench",
     "crates/obsidianq-fs",
 ]

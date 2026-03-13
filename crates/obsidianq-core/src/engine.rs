@@ -52,6 +52,47 @@ fn mac_keyed(key: &[u8; 32], domain: &[u8], segments: &[&[u8]]) -> [u8; 32] {
 const DOMAIN_HEADER: &[u8] = b"obsidianq-v1-header";
 const DOMAIN_FOOTER: &[u8] = b"obsidianq-v1-footer";
 
+#[cfg(not(target_arch = "wasm32"))]
+fn compress_if_requested(input: Vec<u8>, compress: bool) -> Result<Vec<u8>> {
+    if compress {
+        zstd::encode_all(input.as_slice(), 3)
+            .map_err(|e| ObsidianError::CompressionError(e.to_string()))
+    } else {
+        Ok(input)
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn compress_if_requested(input: Vec<u8>, compress: bool) -> Result<Vec<u8>> {
+    if compress {
+        return Err(ObsidianError::CompressionError(
+            "compression is not enabled in wasm builds".into(),
+        ));
+    }
+    Ok(input)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn decompress_if_requested(input: &[u8], compressed: bool) -> Result<Option<Vec<u8>>> {
+    if compressed {
+        let decompressed = zstd::decode_all(input)
+            .map_err(|e| ObsidianError::DecompressionError(e.to_string()))?;
+        Ok(Some(decompressed))
+    } else {
+        Ok(None)
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn decompress_if_requested(_input: &[u8], compressed: bool) -> Result<Option<Vec<u8>>> {
+    if compressed {
+        return Err(ObsidianError::DecompressionError(
+            "compressed payloads are not supported in wasm builds".into(),
+        ));
+    }
+    Ok(None)
+}
+
 // ── Encryption ────────────────────────────────────────────────────────────────
 
 /// All the information needed to start encrypting, independent of key source.
@@ -99,12 +140,7 @@ where
     reader.read_to_end(&mut plaintext)?;
 
     // 2. Optional compression (before encryption — never after).
-    let body: Vec<u8> = if params.compress {
-        zstd::encode_all(plaintext.as_slice(), 3)
-            .map_err(|e| ObsidianError::CompressionError(e.to_string()))?
-    } else {
-        plaintext
-    };
+    let body = compress_if_requested(plaintext, params.compress)?;
 
     // 3. Build header (MAC field zeroed for now — filled in step 5).
     let flags_byte = if params.compress {
@@ -367,8 +403,8 @@ where
         }
         drop(ordered); // release per-chunk plaintext Vecs before decompressing
 
-        let decompressed = zstd::decode_all(body.as_slice())
-            .map_err(|e| ObsidianError::DecompressionError(e.to_string()))?;
+        let decompressed = decompress_if_requested(body.as_slice(), true)?
+            .expect("compressed path must return decompressed bytes");
         body.zeroize();
         writer.write_all(&decompressed)?;
     } else {

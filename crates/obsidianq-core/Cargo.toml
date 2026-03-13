@@ -4,8 +4,6 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-pqcrypto-kyber.workspace   = true
-pqcrypto-traits.workspace  = true
 hkdf.workspace             = true
 sha2.workspace             = true
 argon2.workspace           = true
@@ -16,7 +14,6 @@ rand.workspace             = true
 rand_core.workspace        = true
 zeroize.workspace          = true
 subtle.workspace           = true
-zstd.workspace             = true
 rayon.workspace            = true
 byteorder.workspace        = true
 thiserror.workspace        = true
@@ -24,6 +21,11 @@ hex.workspace              = true
 base64ct.workspace         = true
 tracing.workspace          = true
 serde = { version = "1", features = ["derive"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+pqcrypto-kyber.workspace  = true
+pqcrypto-traits.workspace = true
+zstd.workspace            = true
 
 [dev-dependencies]
 criterion.workspace = true

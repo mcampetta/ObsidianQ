@@ -12,6 +12,7 @@ pub mod delivery;
 pub mod engine;
 pub mod error;
 pub mod format;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod secure_connect;
 
 // Re-export the most-used items for convenience.

@@ -29,6 +29,7 @@
       <div class="hero-actions">
         <a class="btn btn-primary" href="https://github.com/mcampetta/ObsidianQ">View on GitHub</a>
         <a class="btn btn-primary" href="https://github.com/mcampetta/ObsidianQ/releases/latest">Download Latest Release</a>
+        <a class="btn btn-primary" href="web-decrypt/">Try Web Decrypt PoC</a>
       </div>
     </div>
   </header>
@@ -67,6 +68,22 @@
         <li>Choose a portable ZIP archive or a single EXE package for recipients who do not have ObsidianQ installed.</li>
         <li>Inspect Secure Delivery ZIP and EXE packages before extraction to verify metadata and payload integrity.</li>
       </ul>
+    </section>
+
+    <section class="card">
+      <h2>Browser Decrypt Proof of Concept</h2>
+      <p>
+        A new Web Decrypt proof of concept lets recipients inspect and decrypt password-based Secure Delivery packages
+        directly in the browser without running a local executable.
+      </p>
+      <ul>
+        <li>Runs fully client-side.</li>
+        <li>Inspects Secure Delivery ZIP and self-extracting EXE packages.</li>
+        <li>Decrypts password-mode packages to a downloadable plaintext bundle ZIP.</li>
+      </ul>
+      <p>
+        <a class="btn btn-primary" href="web-decrypt/">Open Web Decrypt PoC</a>
+      </p>
     </section>
 
     <section class="card" id="media">
