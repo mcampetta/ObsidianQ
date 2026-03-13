@@ -177,6 +177,11 @@ h1 {
   line-height: 1.5;
 }
 
+.sample-password {
+  display: block;
+  margin-top: 4px;
+}
+
 .sample-link {
   color: var(--accent-hot);
 }
