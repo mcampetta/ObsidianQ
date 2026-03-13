@@ -78,7 +78,7 @@ app.innerHTML = `
         <div class="sample-box">
           <p class="sample-title">Need a test package?</p>
           <p class="sample-copy">
-            <a class="sample-link" href="./WebDecryptSample_SecureDelivery.zip">Download sample package</a>
+            <a class="sample-link" href="./WebDecryptSample_v2_SecureDelivery.zip">Download sample package</a>
             <span>Password: <code>obsidianq-demo</code></span>
           </p>
         </div>
