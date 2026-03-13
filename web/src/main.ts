@@ -70,9 +70,6 @@ app.innerHTML = `
         self-extracting EXE package, or a password-mode <code>.obsq</code> file to inspect it and
         decrypt locally without running a desktop executable.
       </p>
-      <div class="trust-note">
-        <strong>Local only:</strong> files stay in your browser session. Nothing is uploaded.
-      </div>
     </section>
 
       <section class="grid">
@@ -95,23 +92,23 @@ app.innerHTML = `
             <p class="sample-title">Need a test package?</p>
             <p class="sample-copy">
               <a class="sample-link" href="./WebDecryptSample_v2_SecureDelivery.zip">Download sample package</a>
-            <span>Password: <code>obsidianq-demo</code></span>
+              <span>Password: <code>obsidianq-demo</code></span>
+            </p>
+          </div>
+          <label class="field">
+            <span>Password</span>
+            <input id="passwordInput" type="password" placeholder="Enter package password" />
+          </label>
+          <button id="decryptButton" class="button" type="button" disabled>Decrypt</button>
+          <div id="postDecryptActions" class="post-actions hidden">
+            <span class="post-actions-label">Decryption complete.</span>
+            <button id="downloadBundleButton" class="mini-button" type="button" disabled>Download Decrypted Output</button>
+          </div>
+          <p class="hint">
+            Secure Delivery packages are unpacked in-browser after decryption so you can download
+            individual files. Password-mode <code>.obsq</code> files decrypt directly to the original file output.
           </p>
         </div>
-        <label class="field">
-          <span>Password</span>
-          <input id="passwordInput" type="password" placeholder="Enter package password" />
-        </label>
-        <button id="decryptButton" class="button" type="button" disabled>Decrypt</button>
-        <div id="postDecryptActions" class="post-actions hidden">
-          <span class="post-actions-label">Decryption complete.</span>
-          <button id="downloadBundleButton" class="mini-button" type="button" disabled>Download Decrypted Output</button>
-        </div>
-        <p class="hint">
-          Secure Delivery packages are unpacked in-browser after decryption so you can download
-          individual files. Password-mode <code>.obsq</code> files decrypt directly to the original file output.
-        </p>
-      </div>
     </section>
 
     <section id="decryptedCard" class="card decrypted-card hidden">
@@ -257,11 +254,11 @@ async function loadFile(file: File): Promise<void> {
     lastRawOutput = null;
     decryptButton.disabled = false;
     downloadBundleButton.disabled = true;
-      updateDownloadButtonLabel(inspection);
-      postDecryptActions.classList.add("hidden");
-      decryptedCard.classList.add("hidden");
-      setLoadedState(file.name);
-      fileNameLabel.textContent = file.name;
+    updateDownloadButtonLabel(inspection);
+    postDecryptActions.classList.add("hidden");
+    decryptedCard.classList.add("hidden");
+    setLoadedState(file.name);
+    fileNameLabel.textContent = file.name;
     outputEl.textContent = renderInspection(file.name, inspection);
     clearDecryptedPane();
     setStatus(inspection.verification.error ?? "Package inspection complete.", Boolean(inspection.verification.error));
@@ -273,11 +270,11 @@ async function loadFile(file: File): Promise<void> {
     lastRawOutput = null;
     decryptButton.disabled = true;
     downloadBundleButton.disabled = true;
-      updateDownloadButtonLabel(null);
-      postDecryptActions.classList.add("hidden");
-      decryptedCard.classList.add("hidden");
-      clearLoadedState();
-      fileNameLabel.textContent = "No file loaded";
+    updateDownloadButtonLabel(null);
+    postDecryptActions.classList.add("hidden");
+    decryptedCard.classList.add("hidden");
+    clearLoadedState();
+    fileNameLabel.textContent = "No file loaded";
     outputEl.textContent = "Drop a package to inspect it.";
     clearDecryptedPane();
     setStatus(asMessage(error), true);
