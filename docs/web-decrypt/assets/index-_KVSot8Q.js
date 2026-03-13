@@ -48,14 +48,6 @@
       </div>
     </section>
 
-    <section class="card results-card">
-      <div class="section-head">
-        <h2>Package Inspection</h2>
-        <span id="fileNameLabel" class="chip">No file loaded</span>
-      </div>
-      <pre id="inspectionOutput" class="output">Drop a package to inspect it.</pre>
-    </section>
-
     <section class="card decrypted-card">
       <div class="section-head">
         <h2>Decrypted Contents</h2>
@@ -68,6 +60,14 @@
           <p class="preview-empty">Select a decrypted entry to preview it.</p>
         </div>
       </div>
+    </section>
+
+    <section class="card results-card">
+      <div class="section-head">
+        <h2>Package Inspection</h2>
+        <span id="fileNameLabel" class="chip">No file loaded</span>
+      </div>
+      <pre id="inspectionOutput" class="output">Drop a package to inspect it.</pre>
     </section>
   </main>
 `;const Dt=document.querySelector("#dropzone"),Xt=document.querySelector("#fileInput"),Ne=document.querySelector("#pickButton"),Pe=document.querySelector("#passwordInput"),Nt=document.querySelector("#decryptButton"),Ht=document.querySelector("#postDecryptActions"),Et=document.querySelector("#downloadBundleButton"),ie=document.querySelector("#status"),ae=document.querySelector("#inspectionOutput"),se=document.querySelector("#fileNameLabel"),he=document.querySelector("#decryptedSummary"),pe=document.querySelector("#decryptedEmpty"),me=document.querySelector("#decryptedPane"),Yt=document.querySelector("#decryptedList"),Ct=document.querySelector("#previewPane");let kt=null,St=null;Ue();async function Ue(){await Fe(),Ne.addEventListener("click",()=>Xt.click()),Xt.addEventListener("change",async()=>{const C=Xt.files?.[0];C&&await oe(C)}),Nt.addEventListener("click",async()=>{if(!it.bytes||!it.inspection)return;const C=Pe.value;if(!C){yt("Password is required.",!0);return}Nt.disabled=!0,yt("Decrypting in browser...");try{const I=Ce(it.bytes,C);kt=I,Et.disabled=!1,Qt(it.inspection),Ht.classList.remove("hidden"),await je(I,it.inspection,it.fileName),yt("Decryption complete.")}catch(I){kt=null,Et.disabled=!0,Ht.classList.add("hidden"),qt(),yt(be(I),!0)}finally{Nt.disabled=!1}}),Et.addEventListener("click",()=>{if(!kt||!it.inspection)return;const C=it.inspection.kind==="obsq"?Me(it.fileName):`${_e(it.inspection.packageName||it.fileName)}_decrypted_bundle.zip`,I=it.inspection.kind==="obsq"?Jt(C,kt).mime:"application/zip";te(kt,C,I)});for(const C of["dragenter","dragover"])Dt.addEventListener(C,I=>{I.preventDefault(),Dt.classList.add("active")});for(const C of["dragleave","drop"])Dt.addEventListener(C,I=>{I.preventDefault(),Dt.classList.remove("active")});Dt.addEventListener("drop",async C=>{const I=C.dataTransfer?.files?.[0];I&&await oe(I)})}async function oe(C){yt("Reading package...");const I=new Uint8Array(await C.arrayBuffer());try{const l=Ae(I);it.bytes=I,it.fileName=C.name,it.inspection=l,it.decryptedEntries=[],kt=null,Nt.disabled=!1,Et.disabled=!0,Qt(l),Ht.classList.add("hidden"),se.textContent=C.name,ae.textContent=We(C.name,l),qt(),yt(l.verification.error??"Package inspection complete.",!!l.verification.error)}catch(l){it.bytes=null,it.fileName="",it.inspection=null,it.decryptedEntries=[],kt=null,Nt.disabled=!0,Et.disabled=!0,Qt(null),Ht.classList.add("hidden"),se.textContent="No file loaded",ae.textContent="Drop a package to inspect it.",qt(),yt(be(l),!0)}}async function je(C,I,l){if(I.kind==="obsq"){const a=ge(l)||"decrypted-output.bin",r=Jt(a,C);it.decryptedEntries=[r],ue(a);return}const S=await ze.loadAsync(C),p=[],s=Object.keys(S.files).sort((a,r)=>a.localeCompare(r));for(const a of s){const r=S.files[a];if(r.dir)continue;const c=await r.async("uint8array");p.push(Jt(a,c))}it.decryptedEntries=p,ue(I.packageName||l)}function ue(C){if(Yt.innerHTML="",Ct.innerHTML='<p class="preview-empty">Select a decrypted entry to preview it.</p>',it.decryptedEntries.length===0){qt(),yt(`Decryption succeeded, but no files were found in ${C}.`,!0);return}pe.classList.add("hidden"),me.classList.remove("hidden"),he.textContent=`${it.decryptedEntries.length} decrypted file${it.decryptedEntries.length===1?"":"s"}`,it.decryptedEntries.forEach((I,l)=>{const S=document.createElement("button");S.type="button",S.className="decrypted-item",S.innerHTML=`

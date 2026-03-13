@@ -109,14 +109,6 @@ app.innerHTML = `
       </div>
     </section>
 
-    <section class="card results-card">
-      <div class="section-head">
-        <h2>Package Inspection</h2>
-        <span id="fileNameLabel" class="chip">No file loaded</span>
-      </div>
-      <pre id="inspectionOutput" class="output">Drop a package to inspect it.</pre>
-    </section>
-
     <section class="card decrypted-card">
       <div class="section-head">
         <h2>Decrypted Contents</h2>
@@ -129,6 +121,14 @@ app.innerHTML = `
           <p class="preview-empty">Select a decrypted entry to preview it.</p>
         </div>
       </div>
+    </section>
+
+    <section class="card results-card">
+      <div class="section-head">
+        <h2>Package Inspection</h2>
+        <span id="fileNameLabel" class="chip">No file loaded</span>
+      </div>
+      <pre id="inspectionOutput" class="output">Drop a package to inspect it.</pre>
     </section>
   </main>
 `;
