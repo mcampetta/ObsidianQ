@@ -113,7 +113,7 @@ app.innerHTML = `
       </div>
     </section>
 
-    <section class="card decrypted-card">
+    <section id="decryptedCard" class="card decrypted-card hidden">
       <div class="section-head">
         <h2>Decrypted Contents</h2>
         <span id="decryptedSummary" class="chip">Nothing decrypted yet</span>
@@ -147,6 +147,7 @@ const downloadBundleButton = document.querySelector<HTMLButtonElement>("#downloa
 const statusEl = document.querySelector<HTMLParagraphElement>("#status")!;
 const outputEl = document.querySelector<HTMLElement>("#inspectionOutput")!;
 const fileNameLabel = document.querySelector<HTMLElement>("#fileNameLabel")!;
+const decryptedCard = document.querySelector<HTMLElement>("#decryptedCard")!;
 const decryptedSummary = document.querySelector<HTMLElement>("#decryptedSummary")!;
 const decryptedEmpty = document.querySelector<HTMLElement>("#decryptedEmpty")!;
 const decryptedPane = document.querySelector<HTMLElement>("#decryptedPane")!;
@@ -187,6 +188,7 @@ async function bootstrap(): Promise<void> {
       downloadBundleButton.disabled = false;
       updateDownloadButtonLabel(state.inspection);
       postDecryptActions.classList.remove("hidden");
+      decryptedCard.classList.remove("hidden");
       await hydrateDecryptedOutput(rawOutput, state.inspection, state.fileName);
       setStatus("Decryption complete.");
     } catch (error) {
@@ -249,6 +251,7 @@ async function loadFile(file: File): Promise<void> {
     downloadBundleButton.disabled = true;
     updateDownloadButtonLabel(inspection);
     postDecryptActions.classList.add("hidden");
+    decryptedCard.classList.add("hidden");
     fileNameLabel.textContent = file.name;
     outputEl.textContent = renderInspection(file.name, inspection);
     clearDecryptedPane();
@@ -263,6 +266,7 @@ async function loadFile(file: File): Promise<void> {
     downloadBundleButton.disabled = true;
     updateDownloadButtonLabel(null);
     postDecryptActions.classList.add("hidden");
+    decryptedCard.classList.add("hidden");
     fileNameLabel.textContent = "No file loaded";
     outputEl.textContent = "Drop a package to inspect it.";
     clearDecryptedPane();
@@ -396,6 +400,7 @@ function clearDecryptedPane(): void {
   previewPane.innerHTML = `<p class="preview-empty">Select a decrypted entry to preview it.</p>`;
   decryptedEmpty.classList.remove("hidden");
   decryptedPane.classList.add("hidden");
+  decryptedCard.classList.add("hidden");
   decryptedSummary.textContent = "Nothing decrypted yet";
 }
 
