@@ -151,3 +151,16 @@ Compare the resulting hash with the published `.sha256` file.
 
 ObsidianQ is built with strong primitives and practical defaults, but no software is risk-free.
 Validate your threat model, maintain backups, protect private keys, and keep dependencies/releases current.
+
+## Security Status
+
+ObsidianQ uses modern cryptographic primitives including:
+
+• XChaCha20-Poly1305
+• Argon2id
+• BLAKE3
+• ML-KEM (Kyber)
+
+This project has **not yet undergone a formal cryptographic audit**.
+
+Feedback and review from the cryptography community are welcome.
