@@ -164,3 +164,12 @@ ObsidianQ uses modern cryptographic primitives including:
 This project has **not yet undergone a formal cryptographic audit**.
 
 Feedback and review from the cryptography community are welcome.
+
+## Security Documentation
+
+For more detail, see:
+
+- [Security Policy](SECURITY.md)
+- [Threat Model](THREAT_MODEL.md)
+- [Security Architecture](docs/SECURITY_ARCHITECTURE.md)
+- [Disclaimer](DISCLAIMER.md)
