@@ -8,7 +8,7 @@ Please **do not open a public GitHub issue for security vulnerabilities**.
 
 Instead contact:
 
-martin@mcampetta.com
+martin.campetta@gmail.com
 
 Include the following information if possible:
 
