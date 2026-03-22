@@ -9,7 +9,7 @@ ObsidianQ combines practical desktop UX with modern cryptography, including pass
 ## Highlights
 
 - File encryption/decryption with password or Secure Contacts recipient mode
-- Secure Delivery workflows with ZIP bundle and Single EXE outputs
+- Secure Delivery workflows with recommended ZIP browser bundle, encrypted package-only, and Single EXE advanced outputs
 - Secure Contacts identity and trusted contact management
 - Public Identity import/export (`.obsqpub`) with metadata
 - Encrypted Vault workflows (create, load, add/extract/remove, rekey)
@@ -29,6 +29,7 @@ ObsidianQ is designed around local-first trust:
 Core crypto building blocks used by the project include:
 
 - Kyber Round 3 (`pqcrypto-kyber`) for current Secure Contacts recipient key exchange
+- X25519 alongside Kyber Round 3 for the current hybrid recipient protection flow
 - XChaCha20-Poly1305 for authenticated encryption
 - Argon2id for password hardening
 - BLAKE3 for hashing/fingerprints
@@ -55,7 +56,7 @@ ObsidianQ does not currently claim FIPS 203 ML-KEM compliance or interoperabilit
    - `Text` for short text encryption/decryption
    - `Vault` for encrypted vault operations
    - `Inspect` for metadata and integrity review
-  - `Secure Delivery` for portable password-protected delivery
+   - `Secure Delivery` for portable password-protected delivery
    - `Secure Contacts` for identity/contact-based exchange
 
 Important:
@@ -162,19 +163,6 @@ Get-FileHash .\ObsidianQBundle.zip -Algorithm SHA256
 ObsidianQ is built with strong primitives and practical defaults, but no software is risk-free.
 Validate your threat model, maintain backups, protect private keys, and keep dependencies/releases current.
 
-## Security Status
-
-ObsidianQ uses modern cryptographic primitives including:
-
-• XChaCha20-Poly1305
-• Argon2id
-• BLAKE3
-• ML-KEM (Kyber)
-
-This project has **not yet undergone a formal cryptographic audit**.
-
-Feedback and review from the cryptography community are welcome.
-
 ## Security Documentation
 
 For more detail, see:
@@ -182,4 +170,5 @@ For more detail, see:
 - [Security Policy](SECURITY.md)
 - [Threat Model](THREAT_MODEL.md)
 - [Security Architecture](docs/SECURITY_ARCHITECTURE.md)
+- [Format Notes](docs/FORMAT.md)
 - [Disclaimer](DISCLAIMER.md)

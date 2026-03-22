@@ -18,7 +18,8 @@ license = "MIT OR Apache-2.0"
 # Shared dependency versions across workspace
 [workspace.dependencies]
 # Crypto primitives
-# ML-KEM-768 via pqcrypto-kyber (Kyber768 ≡ ML-KEM-768, NIST FIPS 203)
+# Kyber Round 3 implementation used for current recipient compatibility.
+# This is not a claim of FIPS 203 ML-KEM wire compatibility.
 # ml-kem crate 0.3.x is pre-release with broken dep chain as of Feb 2026
 pqcrypto-kyber  = "0.8"
 pqcrypto-traits = "0.3"
