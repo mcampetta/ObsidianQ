@@ -59,7 +59,7 @@ pub struct EncryptArgs {
     #[arg(long, conflicts_with_all = ["password", "pubkey"])]
     pub password_stdin: bool,
 
-    /// Recipient ML-KEM-768 public key file (.bin raw bytes by default; .pem also supported)
+    /// Recipient contact public key file (.bin raw bytes by default; .pem also supported)
     /// Repeat --pubkey to encrypt once for multiple recipients in a single .obsq output.
     #[arg(long = "pubkey", conflicts_with_all = ["password", "password_stdin"])]
     pub pubkey: Vec<PathBuf>,

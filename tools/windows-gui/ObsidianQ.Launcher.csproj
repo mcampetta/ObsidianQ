@@ -22,7 +22,7 @@
     <PublishTrimmed>false</PublishTrimmed>
 
     <Version>1.2.0</Version>
-    <Description>ObsidianQ post-quantum encryption launcher</Description>
+    <Description>ObsidianQ local-first encryption launcher</Description>
   </PropertyGroup>
 
   <ItemGroup>
