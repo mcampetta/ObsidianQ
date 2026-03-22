@@ -903,7 +903,7 @@ dependencies = [
 
 [[package]]
 name = "obsidianq-bench"
-version = "1.2.0"
+version = "1.3.0"
 dependencies = [
  "criterion",
  "obsidianq-core",
@@ -912,7 +912,7 @@ dependencies = [
 
 [[package]]
 name = "obsidianq-cli"
-version = "1.2.0"
+version = "1.3.0"
 dependencies = [
  "anyhow",
  "base64ct",
@@ -942,7 +942,7 @@ dependencies = [
 
 [[package]]
 name = "obsidianq-core"
-version = "1.2.0"
+version = "1.3.0"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -970,7 +970,7 @@ dependencies = [
 
 [[package]]
 name = "obsidianq-fs"
-version = "1.2.0"
+version = "1.3.0"
 dependencies = [
  "obsidianq-core",
  "obsidianq-vault",
@@ -981,7 +981,7 @@ dependencies = [
 
 [[package]]
 name = "obsidianq-vault"
-version = "1.2.0"
+version = "1.3.0"
 dependencies = [
  "blake3",
  "byteorder",
@@ -994,7 +994,7 @@ dependencies = [
 
 [[package]]
 name = "obsidianq-web"
-version = "1.2.0"
+version = "1.3.0"
 dependencies = [
  "anyhow",
  "base64ct",
