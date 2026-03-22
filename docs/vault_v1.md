@@ -16,7 +16,7 @@ per-block AEAD integrity, and read/write WinFSP mount support.
 | Max file size (v1) | ≈ 511 MiB (single-level index, 8190 blocks) |
 | Crash safety | Dual-slot superblock commit protocol |
 | Nonce scheme | Deterministic HKDF (no nonce storage) |
-| Key derivation | Argon2id (password) or ML-KEM-768 (PQC) |
+| Key derivation | Argon2id (password) or Kyber Round 3 recipient mode |
 | AEAD suites | XChaCha20-Poly1305, AES-256-GCM |
 
 ---
@@ -46,13 +46,13 @@ Padded to exactly 2048 bytes with zero bytes.
 |-------|------|-------------|
 | magic | 9 | `OBSQVAULT` |
 | version | 1 | `0x01` |
-| mode | 1 | `0x00` = Password, `0x01` = PQC (ML-KEM-768) |
+| mode | 1 | `0x00` = Password, `0x01` = recipient mode (Kyber Round 3 legacy layout) |
 | suite | 1 | `0x00` = XChaCha20-Poly1305, `0x01` = AES-256-GCM |
 | flags | 1 | Reserved, must be `0x00` |
 | block_size | 4 (u32 LE) | Block size in bytes (default 65,536) |
 | file_id | 16 | Random 128-bit vault identifier |
 | kem_data_len | 2 (u16 LE) | Byte length of `kem_data` |
-| kem_data | variable | Password mode: 32-byte Argon2 salt; PQC mode: 1088-byte KEM ciphertext ‖ 32-byte HKDF salt |
+| kem_data | variable | Password mode: 32-byte Argon2 salt; recipient mode: 1088-byte Kyber Round 3 ciphertext ‖ 32-byte HKDF salt |
 | immutable_mac | 32 | `BLAKE3-keyed(master_key, "obsidianq-v1-obsv-imm\x00" ‖ all fields above)` |
 | _padding | fills to 2048 | Zero bytes |
 
@@ -196,15 +196,15 @@ salt        ← random 32 bytes (stored in kem_data field)
 master_key  ← Argon2id(password, salt, m=64 MiB, t=3, p=4)
 ```
 
-### PQC mode (ML-KEM-768)
+### Recipient mode (Kyber Round 3 legacy layout)
 ```
-(ct, ss)    ← ML-KEM-768.Encapsulate(ek)         // ct = 1088 bytes
+(ct, ss)    ← Kyber768-R3.Encapsulate(ek)        // ct = 1088 bytes
 hkdf_salt   ← random 32 bytes
 master_key  ← HKDF-SHA256(ikm=ss, salt=hkdf_salt, info="obsidianq-v1-root")
 kem_data    = ct ‖ hkdf_salt                      // stored in header
 ```
 
-To open: `ss ← ML-KEM-768.Decapsulate(dk, ct)` then derive `master_key` as above.
+To open: `ss ← Kyber768-R3.Decapsulate(dk, ct)` then derive `master_key` as above.
 
 ---
 

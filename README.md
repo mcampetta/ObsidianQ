@@ -4,12 +4,12 @@
 
 Local-first, high-performance encryption for files, text, vaults, inspection, and secure delivery workflows.
 
-ObsidianQ combines practical desktop UX with modern cryptography, including password-based protection and Secure Contacts key-based exchange for trusted sharing.
+ObsidianQ combines practical desktop UX with modern cryptography, including password-based protection and Secure Contacts recipient exchange for trusted sharing.
 
 ## Highlights
 
-- File encryption/decryption with password or Secure Contacts key-based mode
-- Self-Extracting Package workflows with portable ZIP and Single EXE outputs
+- File encryption/decryption with password or Secure Contacts recipient mode
+- Secure Delivery workflows with ZIP bundle and Single EXE outputs
 - Secure Contacts identity and trusted contact management
 - Public Identity import/export (`.obsqpub`) with metadata
 - Encrypted Vault workflows (create, load, add/extract/remove, rekey)
@@ -55,7 +55,7 @@ ObsidianQ does not currently claim FIPS 203 ML-KEM compliance or interoperabilit
    - `Text` for short text encryption/decryption
    - `Vault` for encrypted vault operations
    - `Inspect` for metadata and integrity review
-   - `Self-Extracting Package` for portable password-protected delivery
+  - `Secure Delivery` for portable password-protected delivery
    - `Secure Contacts` for identity/contact-based exchange
 
 Important:
@@ -114,6 +114,7 @@ dotnet build tools/windows-gui/ObsidianQ.Launcher.csproj -c Debug
   - `SECURITY.md`
   - `THREAT_MODEL.md`
   - `docs/SECURITY_ARCHITECTURE.md`
+  - `docs/FORMAT.md`
   - `DISCLAIMER.md`
 
 ## Screenshots / Demo
