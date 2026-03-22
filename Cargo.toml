@@ -22,6 +22,7 @@ license = "MIT OR Apache-2.0"
 # ml-kem crate 0.3.x is pre-release with broken dep chain as of Feb 2026
 pqcrypto-kyber  = "0.8"
 pqcrypto-traits = "0.3"
+x25519-dalek    = { version = "2", features = ["static_secrets", "zeroize"] }
 hkdf            = "0.12"
 sha2            = "0.10"
 argon2          = "0.5"

@@ -4,13 +4,14 @@
 //! │  HEADER                                                         │
 //! │  Magic        4 bytes  "OBSQ"                                   │
 //! │  Version      1 byte   0x01                                     │
-//! │  Mode         1 byte   0=Password, 1=PQC                        │
+//! │  Mode         1 byte   0=Password, 1=Recipient                  │
 //! │  Suite ID     1 byte   0=XChaCha20-Poly1305, 1=AES-256-GCM     │
 //! │  Flags        1 byte   bit0=compressed                          │
 //! │  Chunk size   4 bytes  LE u32 (in bytes, default 1 MiB)        │
 //! │  File ID      16 bytes random, used in nonce derivation         │
 //! │  KEM data len 2 bytes  LE u16 (salt=32B for pwd, ct≈1088B pqc) │
-//! │  KEM data     variable (salt or ML-KEM ciphertext)             │
+//! │  KEM data     variable (salt, legacy recipient slots, or hybrid │
+//! │                 recipient slots)                                │
 //! │  Header MAC   32 bytes BLAKE3 keyed MAC over above bytes        │
 //! ├─────────────────────────────────────────────────────────────────┤
 //! │  BODY  (N chunks, indices 0..N-1)                               │
@@ -79,8 +80,8 @@ pub mod flags {
 }
 
 /// Parsed file header.  KEM data is:
-///  - Password mode : 32-byte Argon2id salt
-///  - PQC mode      : ML-KEM-768 ciphertext (1088 bytes) ++ 32-byte HKDF salt
+///  - Password mode  : 32-byte Argon2id salt
+///  - Recipient mode : legacy Kyber slot data or hybrid recipient slot data
 #[derive(Debug, Clone)]
 pub struct FileHeader {
     pub version: u8,

@@ -4,12 +4,12 @@
 
 Local-first, high-performance encryption for files, text, vaults, inspection, and secure delivery workflows.
 
-ObsidianQ combines practical desktop UX with modern cryptography, including password-based protection and Secure Contacts key-based exchange for trusted sharing.
+ObsidianQ combines practical desktop UX with modern cryptography, including password-based protection and Secure Contacts recipient exchange for trusted sharing.
 
 ## Highlights
 
-- File encryption/decryption with password or Secure Contacts key-based mode
-- Self-Extracting Package workflows with portable ZIP and Single EXE outputs
+- File encryption/decryption with password or Secure Contacts recipient mode
+- Secure Delivery workflows with ZIP bundle and Single EXE outputs
 - Secure Contacts identity and trusted contact management
 - Public Identity import/export (`.obsqpub`) with metadata
 - Encrypted Vault workflows (create, load, add/extract/remove, rekey)
@@ -28,10 +28,12 @@ ObsidianQ is designed around local-first trust:
 
 Core crypto building blocks used by the project include:
 
-- ML-KEM-768 (Kyber) for post-quantum key exchange
+- Kyber Round 3 (`pqcrypto-kyber`) for current Secure Contacts recipient key exchange
 - XChaCha20-Poly1305 for authenticated encryption
 - Argon2id for password hardening
 - BLAKE3 for hashing/fingerprints
+
+ObsidianQ does not currently claim FIPS 203 ML-KEM compliance or interoperability with standardized ML-KEM implementations.
 
 ## Project Structure
 
@@ -53,7 +55,7 @@ Core crypto building blocks used by the project include:
    - `Text` for short text encryption/decryption
    - `Vault` for encrypted vault operations
    - `Inspect` for metadata and integrity review
-   - `Self-Extracting Package` for portable password-protected delivery
+  - `Secure Delivery` for portable password-protected delivery
    - `Secure Contacts` for identity/contact-based exchange
 
 Important:
@@ -104,6 +106,17 @@ dotnet build tools/windows-gui/ObsidianQ.Launcher.csproj -c Debug
 - On version tags (`v*`), CLI binaries are attached to the GitHub Release
 - Local Linux/macOS validation checklist: `docs/CLI_LINUX_MAC_TESTING.md`
 
+## Security Status
+
+- ObsidianQ has not yet completed a formal third-party security audit.
+- Public review and issue reports are welcome.
+- Current security notes and architecture references:
+  - `SECURITY.md`
+  - `THREAT_MODEL.md`
+  - `docs/SECURITY_ARCHITECTURE.md`
+  - `docs/FORMAT.md`
+  - `DISCLAIMER.md`
+
 ## Screenshots / Demo
 
 Repository media used by the site:
@@ -124,14 +137,11 @@ See `docs/site/README.md` for publish instructions.
 - Latest release: `https://github.com/mcampetta/ObsidianQ/releases/latest`
 - Release assets include:
   - `ObsidianQBundle.zip`
-  - `ObsidianQBundle.sha256`
-- Verify bundle integrity before use:
+- Verify bundle integrity before use with your own trusted hash tooling:
 
 ```powershell
 Get-FileHash .\ObsidianQBundle.zip -Algorithm SHA256
 ```
-
-Compare the resulting hash with the published `.sha256` file.
 
 ## Backup and Recovery
 

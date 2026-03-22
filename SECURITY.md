@@ -1,43 +1,34 @@
-# Security Policy
+# Security Status
 
-## Reporting a Vulnerability
+ObsidianQ is an actively developed local-first encryption project. It has not yet completed a formal third-party security audit.
 
-If you discover a security vulnerability in ObsidianQ, please report it responsibly.
+Current status:
 
-Please **do not open a public GitHub issue for security vulnerabilities**.
+- No formal audit or certification claim
+- Community review is welcome
+- Security issues should be reported privately when possible
+- Public wording should remain conservative and match the implemented code paths
 
-Instead contact:
+Current recipient-encryption note:
 
-martin.campetta@gmail.com
+- Current trusted-contact recipient exchange uses Kyber Round 3 via `pqcrypto-kyber`
+- ObsidianQ does not currently claim FIPS 203 ML-KEM compliance or interoperability
 
-Include the following information if possible:
+Relevant documents:
 
-• Description of the vulnerability  
-• Steps to reproduce  
-• Impact of the issue  
-• Suggested mitigation (if known)
+- [Threat Model](THREAT_MODEL.md)
+- [Security Architecture](docs/SECURITY_ARCHITECTURE.md)
+- [Disclaimer](DISCLAIMER.md)
 
-We will acknowledge reports as quickly as possible and work toward a fix.
+## Reporting Security Issues
 
-Responsible disclosure is greatly appreciated.
+Until a dedicated disclosure channel is added, report sensitive issues directly to the project maintainer through a private GitHub security report or other private contact path when available.
 
----
+Please include:
 
-## Scope
+- affected version or commit
+- platform
+- reproduction steps
+- impact assessment if known
 
-Security issues may include (but are not limited to):
-
-• cryptographic implementation flaws  
-• key management issues  
-• authentication bypass  
-• package integrity verification failures  
-• memory safety vulnerabilities  
-• extraction or container parsing vulnerabilities  
-
----
-
-## Cryptographic Review
-
-ObsidianQ is an independent project and has **not yet undergone a formal third-party cryptographic audit**.
-
-Feedback and review from the cryptography community are welcome and appreciated.
+Avoid posting exploit details publicly before the issue has been triaged.

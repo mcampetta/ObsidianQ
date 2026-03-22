@@ -6,6 +6,10 @@ use clap::Args;
 
 use obsidianq_core::format::{flags, FileHeader, Mode, SuiteId};
 
+const MULTI_MAGIC_V1: &[u8; 4] = b"MRK1";
+const MULTI_MAGIC_V2: &[u8; 4] = b"MRK2";
+const MULTI_MAGIC_V3: &[u8; 4] = b"MRK3";
+
 #[derive(Args)]
 pub struct InspectArgs {
     /// The .obsq file to inspect
@@ -23,7 +27,7 @@ pub fn run(args: InspectArgs) -> Result<()> {
         "  Mode      : {}",
         match h.mode {
             Mode::Password => "Password (Argon2id)",
-            Mode::Pqc => "PQC (ML-KEM-768)",
+            Mode::Pqc => inspect_recipient_mode(&h),
         }
     );
     println!(
@@ -45,4 +49,26 @@ pub fn run(args: InspectArgs) -> Result<()> {
     println!("  Header MAC: {}", hex::encode(h.mac));
     println!("  (body not verified - provide key to decrypt)");
     Ok(())
+}
+
+fn inspect_recipient_mode(h: &FileHeader) -> &'static str {
+    if h.kem_data.starts_with(MULTI_MAGIC_V3) {
+        if h.kem_data.len() >= 6 {
+            let count = u16::from_le_bytes([h.kem_data[4], h.kem_data[5]]) as usize;
+            if count > 1 {
+                "Multi-Recipient Hybrid"
+            } else {
+                "Hybrid Contact"
+            }
+        } else {
+            "Hybrid Contact"
+        }
+    } else if h.kem_data.starts_with(MULTI_MAGIC_V2)
+        || h.kem_data.starts_with(MULTI_MAGIC_V1)
+        || h.kem_data.len() > 32
+    {
+        "Legacy Contact"
+    } else {
+        "Password (Argon2id)"
+    }
 }

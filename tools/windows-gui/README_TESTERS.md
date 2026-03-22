@@ -10,7 +10,7 @@ ObsidianQBundle/
 â”œâ”€â”€ uninstall_context_menu.cmd   â† Removes right-click menu
 â”œâ”€â”€ README_TESTERS.md            â† This file
 â””â”€â”€ keys/
-    â””â”€â”€ README_KEYS.txt          â† How to generate PQC key pairs
+    â””â”€â”€ README_KEYS.txt          â† How to generate recipient key pairs
 ```
 
 Both EXEs must stay in the **same folder** â€” the GUI locates the CLI by looking next to itself.
@@ -39,7 +39,7 @@ No administrator password required. To remove: run `uninstall_context_menu.cmd`.
 
 ---
 
-## PQC (post-quantum) mode
+## Recipient mode
 
 Generate a key pair once with the CLI:
 
@@ -87,7 +87,7 @@ powershell -ExecutionPolicy Bypass -File tools\release\build_bundle.ps1
 tools\release\build_bundle.cmd
 ```
 
-Output lands in `dist\ObsidianQBundle\` plus `dist\ObsidianQBundle.zip`.
+Output lands in `dist\ObsidianQBundle\`.
 
 To clean: `powershell -File tools\release\clean_bundle.ps1`
 

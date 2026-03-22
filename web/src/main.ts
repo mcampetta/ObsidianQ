@@ -37,10 +37,17 @@ type Inspection = {
 
 type DecryptedEntry = {
   path: string;
-  data: Uint8Array;
+  size: number;
   mime: string;
   kind: "text" | "image" | "pdf" | "binary";
+  data?: Uint8Array;
+  load: () => Promise<Uint8Array>;
 };
+
+const LARGE_INPUT_WARNING_BYTES = 128 * 1024 * 1024;
+const LARGE_OUTPUT_WARNING_BYTES = 128 * 1024 * 1024;
+const INLINE_TEXT_PREVIEW_LIMIT = 256 * 1024;
+const INLINE_BINARY_PREVIEW_LIMIT = 24 * 1024 * 1024;
 
 const state: {
   bytes: Uint8Array | null;
@@ -200,7 +207,11 @@ async function bootstrap(): Promise<void> {
       postDecryptActions.classList.remove("hidden");
       decryptedCard.classList.remove("hidden");
       await hydrateDecryptedOutput(rawOutput, state.inspection, state.fileName);
-      setStatus("Decryption complete.");
+      if (rawOutput.byteLength >= LARGE_OUTPUT_WARNING_BYTES) {
+        setStatus("Decryption complete. Large output detected; previews are limited and files load on demand.");
+      } else {
+        setStatus("Decryption complete.");
+      }
     } catch (error) {
       lastRawOutput = null;
       downloadBundleButton.disabled = true;
@@ -266,7 +277,13 @@ async function loadFile(file: File): Promise<void> {
     fileNameLabel.textContent = file.name;
     outputEl.textContent = renderInspection(file.name, inspection);
     clearDecryptedPane();
-    setStatus(inspection.verification.error ?? "Package inspection complete.", Boolean(inspection.verification.error));
+    if (inspection.verification.error) {
+      setStatus(inspection.verification.error, true);
+    } else if (bytes.byteLength >= LARGE_INPUT_WARNING_BYTES) {
+      setStatus("Package inspection complete. Large file loaded; decrypt and preview may take longer.");
+    } else {
+      setStatus("Package inspection complete.");
+    }
   } catch (error) {
     state.bytes = null;
     state.fileName = "";
@@ -289,7 +306,7 @@ async function loadFile(file: File): Promise<void> {
 async function hydrateDecryptedOutput(rawOutput: Uint8Array, inspection: Inspection, fileName: string): Promise<void> {
   if (inspection.kind === "obsq") {
     const entryName = stripObsQExtension(fileName) || "decrypted-output.bin";
-    const entry = makeEntry(entryName, rawOutput);
+    const entry = makeEntry(entryName, rawOutput, async () => rawOutput);
     state.decryptedEntries = [entry];
     renderDecryptedPane(entryName);
     return;
@@ -303,8 +320,9 @@ async function hydrateDecryptedOutput(rawOutput: Uint8Array, inspection: Inspect
     if (file.dir) {
       continue;
     }
-    const data = await file.async("uint8array");
-    entries.push(makeEntry(path, data));
+    const zipEntry = file as typeof file & { _data?: { uncompressedSize?: number } };
+    const size = zipEntry._data?.uncompressedSize ?? 0;
+    entries.push(makeLazyZipEntry(path, size, async () => file.async("uint8array")));
   }
   state.decryptedEntries = entries;
   renderDecryptedPane(inspection.packageName || fileName);
@@ -331,60 +349,103 @@ function renderDecryptedPane(contextName: string): void {
     item.innerHTML = `
       <span>
         <span class="decrypted-name">${escapeHtml(entry.path)}</span>
-        <span class="decrypted-meta">${formatBytes(entry.data.byteLength)}</span>
+        <span class="decrypted-meta">${entry.size > 0 ? formatBytes(entry.size) : "Size on demand"}</span>
       </span>
     `;
-    item.addEventListener("click", () => {
+    item.addEventListener("click", async () => {
       document.querySelectorAll(".decrypted-item.active").forEach((el) => el.classList.remove("active"));
       item.classList.add("active");
-      renderPreview(entry);
+      await renderPreview(entry);
     });
     const dl = document.createElement("button");
     dl.type = "button";
     dl.className = "mini-button";
     dl.textContent = "Download";
-    dl.addEventListener("click", (event) => {
+    dl.addEventListener("click", async (event) => {
       event.stopPropagation();
-      downloadBytes(entry.data, entry.path.split("/").pop() || entry.path, entry.mime);
+      const data = await loadEntryData(entry);
+      downloadBytes(data, entry.path.split("/").pop() || entry.path, entry.mime);
     });
     item.appendChild(dl);
     decryptedList.appendChild(item);
 
     if (index === 0) {
       item.classList.add("active");
-      renderPreview(entry);
+      void renderPreview(entry);
     }
   });
 }
 
-function renderPreview(entry: DecryptedEntry): void {
+async function renderPreview(entry: DecryptedEntry): Promise<void> {
   if (activePreviewUrl) {
     URL.revokeObjectURL(activePreviewUrl);
     activePreviewUrl = null;
   }
 
+  previewPane.innerHTML = `<p class="preview-empty">Loading preview...</p>`;
+  const data = await loadEntryData(entry);
+
   const header = `
     <div class="preview-head">
       <strong>${escapeHtml(entry.path)}</strong>
-      <span>${formatBytes(entry.data.byteLength)}</span>
+      <span>${formatBytes(data.byteLength)}</span>
     </div>
   `;
 
   if (entry.kind === "image") {
-    const url = URL.createObjectURL(new Blob([entry.data], { type: entry.mime }));
+    if (data.byteLength > INLINE_BINARY_PREVIEW_LIMIT) {
+      previewPane.innerHTML = `
+        ${header}
+        <div class="preview-binary">
+          <p>Image preview disabled for large files. Download the file to inspect it locally.</p>
+          <button id="previewDownload" class="button secondary" type="button">Download File</button>
+        </div>
+      `;
+      previewPane.querySelector<HTMLButtonElement>("#previewDownload")?.addEventListener("click", () => {
+        downloadBytes(data, entry.path.split("/").pop() || entry.path, entry.mime);
+      });
+      return;
+    }
+    const url = URL.createObjectURL(new Blob([data], { type: entry.mime }));
     activePreviewUrl = url;
     previewPane.innerHTML = `${header}<img class="preview-image" src="${url}" alt="${escapeHtml(entry.path)}">`;
     return;
   }
 
   if (entry.kind === "text") {
-    const text = new TextDecoder().decode(entry.data);
+    if (data.byteLength > INLINE_TEXT_PREVIEW_LIMIT) {
+      previewPane.innerHTML = `
+        ${header}
+        <div class="preview-binary">
+          <p>Text preview disabled above ${formatBytes(INLINE_TEXT_PREVIEW_LIMIT)}. Download the file to inspect it locally.</p>
+          <button id="previewDownload" class="button secondary" type="button">Download File</button>
+        </div>
+      `;
+      previewPane.querySelector<HTMLButtonElement>("#previewDownload")?.addEventListener("click", () => {
+        downloadBytes(data, entry.path.split("/").pop() || entry.path, entry.mime);
+      });
+      return;
+    }
+    const text = new TextDecoder().decode(data);
     previewPane.innerHTML = `${header}<pre class="preview-text">${escapeHtml(text)}</pre>`;
     return;
   }
 
   if (entry.kind === "pdf") {
-    const url = URL.createObjectURL(new Blob([entry.data], { type: entry.mime }));
+    if (data.byteLength > INLINE_BINARY_PREVIEW_LIMIT) {
+      previewPane.innerHTML = `
+        ${header}
+        <div class="preview-binary">
+          <p>PDF preview disabled for large files. Download the file to inspect it locally.</p>
+          <button id="previewDownload" class="button secondary" type="button">Download File</button>
+        </div>
+      `;
+      previewPane.querySelector<HTMLButtonElement>("#previewDownload")?.addEventListener("click", () => {
+        downloadBytes(data, entry.path.split("/").pop() || entry.path, entry.mime);
+      });
+      return;
+    }
+    const url = URL.createObjectURL(new Blob([data], { type: entry.mime }));
     activePreviewUrl = url;
     previewPane.innerHTML = `${header}<iframe class="preview-pdf" src="${url}" title="${escapeHtml(entry.path)}"></iframe>`;
     return;
@@ -398,7 +459,7 @@ function renderPreview(entry: DecryptedEntry): void {
     </div>
   `;
   previewPane.querySelector<HTMLButtonElement>("#previewDownload")?.addEventListener("click", () => {
-    downloadBytes(entry.data, entry.path.split("/").pop() || entry.path, entry.mime);
+    downloadBytes(data, entry.path.split("/").pop() || entry.path, entry.mime);
   });
 }
 
@@ -416,15 +477,17 @@ function clearDecryptedPane(): void {
   decryptedSummary.textContent = "Nothing decrypted yet";
 }
 
-function makeEntry(path: string, data: Uint8Array): DecryptedEntry {
+function makeEntry(path: string, data: Uint8Array, load: () => Promise<Uint8Array>): DecryptedEntry {
   const lower = path.toLowerCase();
   if (/\.(txt|md|json|csv|xml|log|ini|yaml|yml|html|htm)$/i.test(lower)) {
-    return { path, data, mime: "text/plain", kind: "text" };
+    return { path, size: data.byteLength, data, load, mime: "text/plain", kind: "text" };
   }
   if (/\.(png|jpg|jpeg|gif|webp|bmp|svg)$/i.test(lower)) {
     return {
       path,
+      size: data.byteLength,
       data,
+      load,
       mime: lower.endsWith(".png")
         ? "image/png"
         : lower.endsWith(".gif")
@@ -440,9 +503,49 @@ function makeEntry(path: string, data: Uint8Array): DecryptedEntry {
     };
   }
   if (lower.endsWith(".pdf")) {
-    return { path, data, mime: "application/pdf", kind: "pdf" };
+    return { path, size: data.byteLength, data, load, mime: "application/pdf", kind: "pdf" };
   }
-  return { path, data, mime: "application/octet-stream", kind: "binary" };
+  return { path, size: data.byteLength, data, load, mime: "application/octet-stream", kind: "binary" };
+}
+
+function makeLazyZipEntry(path: string, size: number, load: () => Promise<Uint8Array>): DecryptedEntry {
+  const lower = path.toLowerCase();
+  if (/\.(txt|md|json|csv|xml|log|ini|yaml|yml|html|htm)$/i.test(lower)) {
+    return { path, size, load, mime: "text/plain", kind: "text" };
+  }
+  if (/\.(png|jpg|jpeg|gif|webp|bmp|svg)$/i.test(lower)) {
+    return {
+      path,
+      size,
+      load,
+      mime: lower.endsWith(".png")
+        ? "image/png"
+        : lower.endsWith(".gif")
+          ? "image/gif"
+          : lower.endsWith(".webp")
+            ? "image/webp"
+            : lower.endsWith(".bmp")
+              ? "image/bmp"
+              : lower.endsWith(".svg")
+                ? "image/svg+xml"
+                : "image/jpeg",
+      kind: "image"
+    };
+  }
+  if (lower.endsWith(".pdf")) {
+    return { path, size, load, mime: "application/pdf", kind: "pdf" };
+  }
+  return { path, size, load, mime: "application/octet-stream", kind: "binary" };
+}
+
+async function loadEntryData(entry: DecryptedEntry): Promise<Uint8Array> {
+  if (!entry.data) {
+    entry.data = await entry.load();
+    if (!entry.size) {
+      entry.size = entry.data.byteLength;
+    }
+  }
+  return entry.data;
 }
 
 function renderInspection(fileName: string, inspection: Inspection): string {

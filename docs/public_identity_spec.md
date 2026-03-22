@@ -4,7 +4,7 @@ Version 1 (Draft)
 
 1. Purpose
 
-The ObsidianQ Public Identity format provides a human-friendly wrapper around the cryptographic public key used for encrypted file exchange.
+The ObsidianQ Public Identity format provides a human-friendly wrapper around the cryptographic public key used for recipient-based encrypted file exchange.
 
 The format allows optional metadata such as:
 
@@ -26,13 +26,13 @@ Users must confirm identity details when importing.
 
 The format must:
 
-• Remain compatible with the existing encryption engine
-• Preserve the existing raw public key bytes
-• Allow optional metadata
-• Be easy to copy/paste
-• Be easy to parse
-• Be future-extensible
-• Support file or clipboard exchange
+- Remain compatible with the existing encryption engine
+- Preserve the existing raw public key bytes
+- Allow optional metadata
+- Be easy to copy/paste
+- Be easy to parse
+- Be future-extensible
+- Support file or clipboard exchange
 
 3. File Extension
 
@@ -43,6 +43,7 @@ Recommended file extension:
 Example:
 
 alice.obsqpub
+
 4. Clipboard Format
 
 Public identities may be exchanged via clipboard.
@@ -57,13 +58,17 @@ name:Alice Johnson
 email:alice@example.com
 device:Alice Laptop
 created:2026-03-06T14:22:01Z
-algorithm:ML-KEM-768
+algorithm:Kyber768-R3+X25519
 fingerprint:8A4F2D33E918F2A1
 
 key:
 MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAp8...
+classical_key:
+f8rU8L6td2W+4F0q8wqQW1xw1tq8p8uT1l9M8m1FQd0=
 -----END OBSIDIANQ PUBLIC IDENTITY-----
+
 5. Field Definitions
+
 version
 version:1
 
@@ -105,11 +110,16 @@ algorithm
 
 Example:
 
-algorithm:ML-KEM-768
+algorithm:Kyber768-R3+X25519
 
 Indicates the key algorithm used.
 
 Required.
+
+Current supported values:
+
+- `Kyber768-R3+X25519` for the current hybrid public identity format
+- `ML-KEM-768` as a legacy identity label retained for older exported identities
 
 fingerprint
 
@@ -135,6 +145,13 @@ MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAp8...
 Required.
 
 The cryptographic key itself.
+
+For hybrid identities, the document may also include:
+
+classical_key:
+<base64 x25519 public key>
+
+The launcher combines the Kyber Round 3 and X25519 public material into the internal hybrid recipient representation when importing.
 
 6. Fingerprint Generation
 

@@ -1,13 +1,13 @@
 use std::fs;
 use std::io::{BufRead, BufReader, BufWriter, Read};
 use std::path::PathBuf;
+use std::process;
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
     Arc,
 };
 use std::thread;
 use std::time::Duration;
-use std::process;
 
 use anyhow::{bail, Context, Result};
 use chacha20poly1305::{
@@ -20,17 +20,19 @@ use zeroize::{Zeroize, Zeroizing};
 
 use obsidianq_core::{
     crypto::{
+        hybrid::{self, HYBRID_RECIPIENT_MAGIC_V1, X25519_PUBLIC_BYTES},
         kdf::{self, Argon2Params, MasterKey},
-        kem::{self, CT_BYTES, EK_BYTES},
+        kem::{self, CT_BYTES},
     },
     engine::{encrypt_with_progress, EncryptParams, DEFAULT_CHUNK_SIZE},
     format::{Mode, SuiteId},
 };
 
 use super::json_output::{print_json_error, print_json_success};
-use super::read_pub;
+use super::read_pub_material;
 
 const MULTI_MAGIC_V2: &[u8; 4] = b"MRK2";
+const MULTI_MAGIC_V3: &[u8; 4] = HYBRID_RECIPIENT_MAGIC_V1;
 const WRAP_NONCE_LEN: usize = 24;
 const WRAP_CT_LEN: usize = 48; // 32-byte key + 16-byte tag
 const WRAP_INFO: &[u8] = b"obsidianq-v1-mrk2-wrap";
@@ -162,17 +164,17 @@ fn run_impl(args: EncryptArgs) -> Result<()> {
 
         (mk, Mode::Password, salt.to_vec())
     } else {
-        // PQC mode: encapsulate to recipient public key.
-        if args.pubkey.len() == 1 {
-            let pk_raw = read_pub(&args.pubkey[0]).context("read public key")?;
-            if pk_raw.len() != EK_BYTES {
-                bail!(
-                    "public key is {} bytes, expected {}",
-                    pk_raw.len(),
-                    EK_BYTES
-                );
-            }
-            let ek_arr: [u8; EK_BYTES] = pk_raw.try_into().unwrap();
+        let recipients = args
+            .pubkey
+            .iter()
+            .map(|path| {
+                read_pub_material(path).with_context(|| format!("read public key {}", path.display()))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let all_hybrid = recipients.iter().all(|r| r.x25519_public.is_some());
+        if recipients.len() == 1 && !all_hybrid {
+            let ek_arr = recipients[0].kyber_public;
             let (ct, ss) = kem::encapsulate(&ek_arr).context("KEM encapsulation")?;
             let mut hkdf_salt = [0u8; 32];
             rand::thread_rng().fill_bytes(&mut hkdf_salt);
@@ -189,12 +191,17 @@ fn run_impl(args: EncryptArgs) -> Result<()> {
             rand::thread_rng().fill_bytes(&mut master_bytes);
             let mk = MasterKey::from_bytes(master_bytes);
 
-            let count = args.pubkey.len();
+            let count = recipients.len();
             if count > u16::MAX as usize {
                 bail!("too many recipients: {count}");
             }
 
-            let total_len = 4 + 2 + count * (CT_BYTES + WRAP_NONCE_LEN + WRAP_CT_LEN) + 32;
+            let entry_len = if all_hybrid {
+                CT_BYTES + X25519_PUBLIC_BYTES + WRAP_NONCE_LEN + WRAP_CT_LEN
+            } else {
+                CT_BYTES + WRAP_NONCE_LEN + WRAP_CT_LEN
+            };
+            let total_len = 4 + 2 + count * entry_len + 32;
             if total_len > u16::MAX as usize {
                 bail!(
                     "too many recipients for file header format ({} bytes > 65535)",
@@ -203,33 +210,59 @@ fn run_impl(args: EncryptArgs) -> Result<()> {
             }
 
             let mut kem_data = Vec::with_capacity(total_len);
-            kem_data.extend_from_slice(MULTI_MAGIC_V2);
+            kem_data.extend_from_slice(if all_hybrid {
+                MULTI_MAGIC_V3
+            } else {
+                MULTI_MAGIC_V2
+            });
             kem_data.extend_from_slice(&(count as u16).to_le_bytes());
 
-            for (idx, path) in args.pubkey.iter().enumerate() {
-                let pk_raw = read_pub(path)
-                    .with_context(|| format!("read public key {}", path.display()))?;
-                if pk_raw.len() != EK_BYTES {
-                    bail!(
-                        "public key {} is {} bytes, expected {}",
-                        path.display(),
-                        pk_raw.len(),
-                        EK_BYTES
-                    );
-                }
-                let ek_arr: [u8; EK_BYTES] = pk_raw.try_into().unwrap();
-                let (ct, ss) = kem::encapsulate(&ek_arr).context("KEM encapsulation")?;
-                let wrap_key = kdf::derive_root_key(ss.as_bytes(), &hkdf_salt)
-                    .context("root key derivation")?;
-                let cipher = XChaCha20Poly1305::new(wrap_key.as_bytes().into());
+            for (idx, recipient) in recipients.iter().enumerate() {
+                let (ct, ss) =
+                    kem::encapsulate(&recipient.kyber_public).context("KEM encapsulation")?;
+                let wrap_key_bytes = if all_hybrid {
+                    let x25519_public = recipient
+                        .x25519_public
+                        .as_ref()
+                        .context("hybrid recipient missing X25519 public key")?;
+                    let (ephemeral_public, x_shared) = hybrid::encapsulate_x25519(x25519_public);
+                    kem_data.extend_from_slice(&ct);
+                    kem_data.extend_from_slice(&ephemeral_public);
+                    hybrid::derive_hybrid_wrap_key(ss.as_bytes(), &x_shared, &hkdf_salt)
+                        .context("hybrid wrap key derivation")?
+                } else {
+                    kem_data.extend_from_slice(&ct);
+                    kdf::derive_root_key(ss.as_bytes(), &hkdf_salt)
+                        .context("root key derivation")?
+                        .as_bytes()
+                        .to_owned()
+                };
+
+                let cipher = XChaCha20Poly1305::new((&wrap_key_bytes).into());
                 let mut wrap_nonce = [0u8; WRAP_NONCE_LEN];
                 rand::thread_rng().fill_bytes(&mut wrap_nonce);
-                let mut aad = Vec::with_capacity(WRAP_INFO.len() + 2 + 4 + 4 + CT_BYTES);
+                let mut aad = Vec::with_capacity(
+                    WRAP_INFO.len()
+                        + 2
+                        + 4
+                        + 4
+                        + CT_BYTES
+                        + if all_hybrid { X25519_PUBLIC_BYTES } else { 0 },
+                );
                 aad.extend_from_slice(WRAP_INFO);
                 aad.extend_from_slice(&1u16.to_le_bytes());
-                aad.extend_from_slice(MULTI_MAGIC_V2);
+                aad.extend_from_slice(if all_hybrid {
+                    MULTI_MAGIC_V3
+                } else {
+                    MULTI_MAGIC_V2
+                });
                 aad.extend_from_slice(&(idx as u32).to_le_bytes());
                 aad.extend_from_slice(&ct);
+                if all_hybrid {
+                    aad.extend_from_slice(
+                        &kem_data[kem_data.len() - X25519_PUBLIC_BYTES..kem_data.len()],
+                    );
+                }
                 let wrapped = cipher
                     .encrypt(
                         wrap_nonce.as_slice().into(),
@@ -242,7 +275,6 @@ fn run_impl(args: EncryptArgs) -> Result<()> {
                 if wrapped.len() != WRAP_CT_LEN {
                     bail!("unexpected wrapped master-key length {}", wrapped.len());
                 }
-                kem_data.extend_from_slice(&ct);
                 kem_data.extend_from_slice(&wrap_nonce);
                 kem_data.extend_from_slice(&wrapped);
             }

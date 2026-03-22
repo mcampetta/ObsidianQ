@@ -1,16 +1,19 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use chrono::Utc;
 use clap::{Args, Subcommand};
-use obsidianq_core::crypto::kem::{self, DK_BYTES, EK_BYTES};
+use obsidianq_core::crypto::{
+    hybrid,
+    kem::{self, DK_BYTES, EK_BYTES},
+};
 
 use crate::public_identity::{
     compute_fingerprint_b64, render_identity_block, PublicIdentity, ID_ALGORITHM,
 };
 
-use super::{read_pub, write_priv, write_pub};
+use super::{read_pub_material, write_priv_material, write_pub_material};
 
 #[derive(Args)]
 pub struct KeyArgs {
@@ -20,7 +23,7 @@ pub struct KeyArgs {
 
 #[derive(Subcommand)]
 pub enum KeyCmd {
-    /// Generate a fresh ML-KEM-768 keypair (optionally with identity metadata)
+    /// Generate a fresh hybrid recipient keypair (Kyber Round 3 + X25519)
     Generate(KeyGenerateArgs),
     /// Export a public identity document to stdout or file
     ExportPublic(ExportPublicArgs),
@@ -64,11 +67,18 @@ pub fn run(args: KeyArgs) -> Result<()> {
 
 pub fn run_generate(a: KeyGenerateArgs) -> Result<()> {
     let (ek, dk) = kem::generate_keypair();
-    write_pub(&a.pubkey, ek.0.as_ref())?;
-    write_priv(&a.privkey, dk.0.as_ref())?;
+    let (x25519_public, x25519_private) = hybrid::generate_x25519_keypair();
+    write_pub_material(&a.pubkey, &ek.0, Some(&x25519_public))?;
+    write_priv_material(&a.privkey, &dk.0, Some(&x25519_private))?;
     println!("Public key  -> {}", a.pubkey.display());
     println!("Private key -> {}", a.privkey.display());
-    println!("Key sizes: EK={} B, DK={} B", EK_BYTES, DK_BYTES);
+    println!(
+        "Key sizes: Kyber EK={} B, Kyber DK={} B, X25519 pub={} B, X25519 priv={} B",
+        EK_BYTES,
+        DK_BYTES,
+        hybrid::X25519_PUBLIC_BYTES,
+        hybrid::X25519_PRIVATE_BYTES
+    );
 
     if a.name.is_some() || a.email.is_some() || a.device.is_some() {
         let fp = compute_fingerprint_b64(ek.0.as_ref());
@@ -96,12 +106,9 @@ fn run_export_public(a: ExportPublicArgs) -> Result<()> {
     } else {
         find_default_public_key().context("no default public key found; use --pubkey <path>")?
     };
-    let raw = read_pub(&pubkey_path)
+    let material = read_pub_material(&pubkey_path)
         .with_context(|| format!("read public key {}", pubkey_path.display()))?;
-    if raw.is_empty() {
-        bail!("public key is empty");
-    }
-    let fp = compute_fingerprint_b64(&raw);
+    let fp = compute_fingerprint_b64(&material.kyber_public);
 
     let map = load_meta_records()?;
     let rec = map.get(&fp);
@@ -116,7 +123,8 @@ fn run_export_public(a: ExportPublicArgs) -> Result<()> {
             .filter(|v| !v.trim().is_empty())
             .unwrap_or_else(|| ID_ALGORITHM.to_string()),
         fingerprint: fp,
-        public_key_bytes: raw,
+        public_key_bytes: material.kyber_public.to_vec(),
+        classical_public_key_bytes: material.x25519_public.map(|v| v.to_vec()),
     };
     let doc = render_identity_block(&identity);
 
