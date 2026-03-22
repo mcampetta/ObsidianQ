@@ -32,6 +32,7 @@
   <ItemGroup>
     <EmbeddedResource Include="embedded\ObsidianQ.Bootstrapper.exe" LogicalName="ObsidianQ.Launcher.Embedded.ObsidianQ.Bootstrapper.exe" />
     <EmbeddedResource Include="embedded\ObsidianQ.Extractor.exe" LogicalName="ObsidianQ.Launcher.Embedded.ObsidianQ.Extractor.exe" />
+    <EmbeddedResource Include="embedded\ObsidianQ.WebDecrypt.html" LogicalName="ObsidianQ.Launcher.Embedded.ObsidianQ.WebDecrypt.html" />
     <EmbeddedResource Include="embedded\obsidianq.exe" LogicalName="ObsidianQ.Launcher.Embedded.obsidianq.exe" />
   </ItemGroup>
 

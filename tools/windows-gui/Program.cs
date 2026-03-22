@@ -2214,7 +2214,7 @@ class MainForm : Form
 
     private static readonly string ExePath = ResolveExePath();
     private static readonly string ExtractorStubPath = ResolveExtractorStubPath();
-    private static readonly string DeliveryViewerPath = ResolveDeliveryViewerPath();
+    private static readonly string DeliveryOfflineHtmlPath = ResolveDeliveryOfflineHtmlPath();
     private static readonly string LocalKeysDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "ObsidianQ", "keys");
@@ -5984,7 +5984,9 @@ class MainForm : Form
                     looksLikeWrappedExe = zf.Entries.Any(e =>
                         string.Equals(Path.GetFileName(e.FullName), "Click_Here_to_Decrypt.exe", StringComparison.OrdinalIgnoreCase));
                     looksLikeDeliveryBundle = zf.Entries.Any(e =>
-                        string.Equals(Path.GetFileName(e.FullName), "SecureDeliveryPackage.zip", StringComparison.OrdinalIgnoreCase));
+                        string.Equals(Path.GetFileName(e.FullName), "SecureDeliveryPackage.zip", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(Path.GetFileName(e.FullName), "package.zip", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(Path.GetFileName(e.FullName), "decrypt.html", StringComparison.OrdinalIgnoreCase));
                 }
                 catch { /* not a valid zip or inaccessible */ }
 
@@ -6120,14 +6122,17 @@ class MainForm : Form
                     {
                         if (looksLikeDeliveryBundle)
                         {
-                            if (!TryExtractZipEntryToTempFile(path, "SecureDeliveryPackage.zip", ".zip", out var extractedBundle))
+                            bool extracted =
+                                TryExtractZipEntryToTempFile(path, "package.zip", ".zip", out var extractedBundle) ||
+                                TryExtractZipEntryToTempFile(path, "SecureDeliveryPackage.zip", ".zip", out extractedBundle);
+                            if (!extracted)
                             {
                                 lblInspectTypeVal.Text = "Secure Delivery Package (ZIP)";
                                 lblInspectModeVal.Text = "Password";
                                 lblInspectVersionVal.Text = "Unknown";
                                 sb.AppendLine("Container: Secure Delivery Package (ZIP)");
                                 sb.AppendLine("Delivery bundle: detected");
-                                sb.AppendLine("Inspect detail: failed to extract SecureDeliveryPackage.zip from archive.");
+                                sb.AppendLine("Inspect detail: failed to extract package.zip from archive.");
                                 rtbInspect.Text = sb.ToString();
                                 InspectStatus("Detected ZIP delivery bundle, but failed to read the packaged delivery file.", error: true);
                                 return;
@@ -6478,11 +6483,11 @@ class MainForm : Form
         txtDelInstructions.Multiline = true;
         txtDelInstructions.ScrollBars = ScrollBars.Vertical;
         txtDelInstructions.Text =
-            "1) If you received a ZIP bundle, extract all files into the same folder." + "\r\n" +
-            "2) Run Click_Here_to_Decrypt.exe from that folder." + "\r\n" +
-            "3) Enter your password when prompted." + "\r\n" +
-            "4) Choose where to extract your files." + "\r\n" +
-            "5) Use Single EXE mode only when the sender explicitly chose that format.";
+            "1) Extract the ZIP bundle into a folder." + "\r\n" +
+            "2) Open decrypt.html in your browser." + "\r\n" +
+            "3) Drag package.zip into the page or choose it manually." + "\r\n" +
+            "4) Enter the password provided separately." + "\r\n" +
+            "5) Save the decrypted output.";
         var txtDelExtractOut = MakeTextBox();
         txtDelExtractOut.Text = string.Empty;
         var chkDelCompress = new CheckBox { Text = "Compress files before packaging", AutoSize = true, ForeColor = Theme.TextMain, BackColor = Theme.Bg, Font = Theme.SafeMono(8.5f) };
@@ -6508,7 +6513,8 @@ class MainForm : Form
         lblDelModeHint.AutoSize = false;
         lblDelModeHint.Dock = DockStyle.Fill;
         lblDelModeHint.TextAlign = ContentAlignment.TopLeft;
-        var rbDelZip = new RadioButton { Text = "ZIP Archive (Recommended)", AutoSize = true, Checked = true, ForeColor = Theme.TextMain, BackColor = Theme.Bg, Font = Theme.SafeMono(8.5f) };
+        var rbDelZip = new RadioButton { Text = "ZIP Bundle (Recommended)", AutoSize = true, Checked = true, ForeColor = Theme.TextMain, BackColor = Theme.Bg, Font = Theme.SafeMono(8.5f) };
+        var rbDelPackage = new RadioButton { Text = "Encrypted Package Only", AutoSize = true, ForeColor = Theme.TextMain, BackColor = Theme.Bg, Font = Theme.SafeMono(8.5f) };
         var rbDelExe = new RadioButton { Text = "Single EXE File (Advanced)", AutoSize = true, ForeColor = Theme.TextMain, BackColor = Theme.Bg, Font = Theme.SafeMono(8.5f) };
         var lstDelSources = new ListBox
         {
@@ -6611,8 +6617,8 @@ class MainForm : Form
         string BuildDeliveryPackagePath()
         {
             string zipPath = BuildDeliveryZipPath();
-            if (!rbDelExe.Checked) return zipPath;
-            return Path.ChangeExtension(zipPath, ".exe");
+            if (rbDelExe.Checked) return Path.ChangeExtension(zipPath, ".exe");
+            return zipPath;
         }
 
         string BuildDeliveryZipPath()
@@ -6725,7 +6731,7 @@ class MainForm : Form
             bool passwordOk = len >= 8;
             bool confirmOk = string.Equals(txtDelPassword.Text, txtDelPasswordConfirm.Text, StringComparison.Ordinal);
             bool sourcesOk = lstDelSources.Items.Count > 0;
-            bool formatOk = rbDelZip.Checked || rbDelExe.Checked;
+            bool formatOk = rbDelZip.Checked || rbDelPackage.Checked || rbDelExe.Checked;
             btnDelCreate.Enabled = nameOk && outOk && passwordOk && confirmOk && sourcesOk && formatOk;
 
             string validationHint = string.Empty;
@@ -6752,7 +6758,9 @@ class MainForm : Form
             lblDelModeHint.ForeColor = rbDelExe.Checked ? Theme.Error : Theme.TextDim;
             lblDelModeHint.Text = rbDelExe.Checked
                 ? "Advanced mode: executable attachments may be blocked, quarantined, or treated as suspicious.\r\nPrefer ZIP bundle when emailing customers."
-                : "Preferred order: use .obsq from FILE for ObsidianQ users.\r\nIn this tab, ZIP bundle is the safest recipient-friendly option.";
+                : rbDelPackage.Checked
+                    ? "Package-only mode outputs just the encrypted Secure Delivery package.\r\nUse this when the recipient already knows how to open Secure Delivery packages."
+                    : "Recommended: ZIP bundle includes the encrypted package, offline browser decryptor, and README.\r\nRecipients do not need to run a desktop executable.";
             lblDelMetadataHint.Text = chkDelSignMetadata.Checked
                 ? "Signed packages expose fingerprint-based verification.\r\nSender details are optional."
                 : "Unsigned packages omit sender proof.\r\nIdentity metadata is not included.";
@@ -6781,7 +6789,7 @@ class MainForm : Form
             catch { return false; }
         }
 
-        bool TryBuildZipDeliveryBundle(string packagePath, bool includeStartHere, string? customInstructions, out string error)
+        bool TryBuildZipDeliveryBundle(string packagePath, string? customInstructions, out string error)
         {
             error = string.Empty;
             try
@@ -6791,49 +6799,42 @@ class MainForm : Form
                     error = "Package output not found.";
                     return false;
                 }
-                if (!File.Exists(DeliveryViewerPath))
+                if (!File.Exists(DeliveryOfflineHtmlPath))
                 {
-                    error = $"ZIP delivery viewer not found at: {DeliveryViewerPath}";
-                    return false;
-                }
-                if (!File.Exists(ExePath))
-                {
-                    error = "obsidianq.exe not found; cannot build ZIP delivery bundle.";
+                    error = $"Offline web decryptor not found at: {DeliveryOfflineHtmlPath}";
                     return false;
                 }
 
                 string tempRoot = Path.Combine(Path.GetTempPath(), $"obsq_delivery_zip_wrap_{Guid.NewGuid():N}");
                 Directory.CreateDirectory(tempRoot);
-                string tempViewerPath = Path.Combine(tempRoot, "Click_Here_to_Decrypt.exe");
+                string tempViewerPath = Path.Combine(tempRoot, "decrypt.html");
                 string tempZipPath = Path.Combine(tempRoot, Path.GetFileName(packagePath));
-                File.Copy(DeliveryViewerPath, tempViewerPath, overwrite: true);
+                File.Copy(DeliveryOfflineHtmlPath, tempViewerPath, overwrite: true);
 
-                const string startHereText =
+                string readmeText =
                     "ObsidianQ Secure Delivery Bundle\r\n\r\n" +
                     "1) Extract all files from this ZIP into the same folder.\r\n" +
-                    "2) Keep Click_Here_to_Decrypt.exe, SecureDeliveryPackage.zip, and obsidianq.exe together.\r\n" +
-                    "3) Run Click_Here_to_Decrypt.exe.\r\n" +
-                    "4) Enter your password when prompted.\r\n" +
-                    "5) Choose where to extract your files.\r\n\r\n" +
-                    "Prefer ZIP bundle delivery for email and customer-facing sharing. Standalone EXE attachments are often blocked.\r\n";
+                    "2) Open decrypt.html in your browser.\r\n" +
+                    "3) Drag package.zip into the page or choose it manually.\r\n" +
+                    "4) Enter the password provided separately.\r\n" +
+                    "5) Save the decrypted output.\r\n\r\n" +
+                    "Security Notes\r\n\r\n" +
+                    "- This decryptor runs entirely in your browser.\r\n" +
+                    "- No data is uploaded to any server.\r\n" +
+                    "- You may disconnect from the internet before opening decrypt.html.\r\n";
+
+                if (!string.IsNullOrWhiteSpace(customInstructions))
+                {
+                    readmeText += "\r\nAdditional Notes\r\n\r\n" + customInstructions.Trim() + "\r\n";
+                }
 
                 using (var zip = ZipFile.Open(tempZipPath, ZipArchiveMode.Create))
                 {
-                    zip.CreateEntryFromFile(tempViewerPath, "Click_Here_to_Decrypt.exe", CompressionLevel.Optimal);
-                    zip.CreateEntryFromFile(ExePath, "obsidianq.exe", CompressionLevel.Optimal);
-                    zip.CreateEntryFromFile(packagePath, "SecureDeliveryPackage.zip", CompressionLevel.Optimal);
-                    if (!string.IsNullOrWhiteSpace(customInstructions))
-                    {
-                        var customEntry = zip.CreateEntry("INSTRUCTIONS.txt", CompressionLevel.Optimal);
-                        using var sw = new StreamWriter(customEntry.Open(), new UTF8Encoding(false));
-                        sw.Write(customInstructions);
-                    }
-                    else if (includeStartHere)
-                    {
-                        var infoEntry = zip.CreateEntry("START_HERE.txt", CompressionLevel.Optimal);
-                        using var sw = new StreamWriter(infoEntry.Open(), new UTF8Encoding(false));
-                        sw.Write(startHereText);
-                    }
+                    zip.CreateEntryFromFile(tempViewerPath, "decrypt.html", CompressionLevel.Optimal);
+                    zip.CreateEntryFromFile(packagePath, "package.zip", CompressionLevel.Optimal);
+                    var infoEntry = zip.CreateEntry("README.txt", CompressionLevel.Optimal);
+                    using var sw = new StreamWriter(infoEntry.Open(), new UTF8Encoding(false));
+                    sw.Write(readmeText);
                 }
 
                 try { File.Delete(packagePath); } catch { }
@@ -7085,13 +7086,12 @@ class MainForm : Form
                     if (!string.IsNullOrWhiteSpace(outputPath))
                         txtDelPackagePath.Text = outputPath!;
                     string finalZipPath = !string.IsNullOrWhiteSpace(outputPath) ? outputPath! : BuildDeliveryZipPath();
-                    bool includeStartHere = !chkDelIncludeInstructions.Checked;
                     if (rbDelZip.Checked)
                     {
                         string? customZipInstructions = chkDelIncludeInstructions.Checked ? (txtDelInstructions.Text ?? string.Empty) : null;
-                        if (TryBuildZipDeliveryBundle(finalZipPath, includeStartHere, customZipInstructions, out var embedErr))
+                        if (TryBuildZipDeliveryBundle(finalZipPath, customZipInstructions, out var embedErr))
                         {
-                            DelLog("[OK] Built ZIP delivery bundle with viewer, package, and instructions.", Theme.AccentDim);
+                            DelLog("[OK] Built ZIP delivery bundle with offline browser decryptor, package, and README.", Theme.AccentDim);
                             DelStatus(string.IsNullOrWhiteSpace(msg) ? "ZIP delivery bundle created." : $"{msg} ZIP delivery bundle created.");
                         }
                         else
@@ -7100,10 +7100,15 @@ class MainForm : Form
                             DelStatus(string.IsNullOrWhiteSpace(msg) ? "Package created (ZIP bundle assembly failed)." : $"{msg} ZIP bundle assembly failed.", error: true);
                         }
                     }
+                    else if (rbDelPackage.Checked)
+                    {
+                        txtDelPackagePath.Text = finalZipPath;
+                        DelStatus(string.IsNullOrWhiteSpace(msg) ? "Encrypted package created." : $"{msg} Encrypted package created.");
+                    }
                     else
                     {
                         string finalExePath = BuildDeliveryPackagePath();
-                        if (TryBuildSingleExeFromPackage(finalZipPath, finalExePath, includeStartHere, out var exeErr))
+                        if (TryBuildSingleExeFromPackage(finalZipPath, finalExePath, !chkDelIncludeInstructions.Checked, out var exeErr))
                         {
                             try { File.Delete(finalZipPath); } catch { }
                             txtDelPackagePath.Text = finalExePath;
@@ -7113,7 +7118,7 @@ class MainForm : Form
                         {
                             DelLog($"[ERR] Failed to build single EXE package: {exeErr}", Theme.Error);
                             string? customZipInstructions = chkDelIncludeInstructions.Checked ? (txtDelInstructions.Text ?? string.Empty) : null;
-                            if (TryBuildZipDeliveryBundle(finalZipPath, includeStartHere, customZipInstructions, out var zipFallbackErr))
+                            if (TryBuildZipDeliveryBundle(finalZipPath, customZipInstructions, out var zipFallbackErr))
                             {
                                 txtDelPackagePath.Text = finalZipPath;
                                 DelLog("[OK] Fallback: created ZIP delivery bundle.", Theme.AccentDim);
@@ -7170,6 +7175,7 @@ class MainForm : Form
         chkDelIncludeFileList.CheckedChanged += (_, _) => RefreshDeliverySummary();
         chkDelIncludeVersionMetadata.CheckedChanged += (_, _) => RefreshDeliverySummary();
         rbDelZip.CheckedChanged += (_, _) => RefreshDeliverySummary();
+        rbDelPackage.CheckedChanged += (_, _) => RefreshDeliverySummary();
         rbDelExe.CheckedChanged += (_, _) => RefreshDeliverySummary();
         chkDelCompress.CheckedChanged += (_, _) => RefreshDeliverySummary();
         RefreshDeliveryOptionVisuals();
@@ -7207,7 +7213,8 @@ class MainForm : Form
         delOutputHost.Controls.Add(MakeLabel("OUTPUT FOLDER", 8.5f, true), 0, 0);
         delOutputHost.Controls.Add(delOutRow, 1, 0);
 
-        var delOptionsCompact = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 11, BackColor = Theme.Bg, Margin = new Padding(0), Padding = new Padding(0) };
+        var delOptionsCompact = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 12, BackColor = Theme.Bg, Margin = new Padding(0), Padding = new Padding(0) };
+        delOptionsCompact.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
         delOptionsCompact.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
         delOptionsCompact.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
         delOptionsCompact.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
@@ -7227,15 +7234,16 @@ class MainForm : Form
         delNameRow.Controls.Add(txtDelName, 1, 0);
         delOptionsCompact.Controls.Add(delNameRow, 0, 0);
         delOptionsCompact.Controls.Add(rbDelZip, 0, 1);
-        delOptionsCompact.Controls.Add(rbDelExe, 0, 2);
-        delOptionsCompact.Controls.Add(lblDelModeHint, 0, 3);
-        delOptionsCompact.Controls.Add(chkDelCompress, 0, 4);
-        delOptionsCompact.Controls.Add(chkDelIncludeInstructions, 0, 5);
-        delOptionsCompact.Controls.Add(chkDelSignMetadata, 0, 6);
-        delOptionsCompact.Controls.Add(chkDelIncludeSenderDetails, 0, 7);
-        delOptionsCompact.Controls.Add(chkDelIncludeFileList, 0, 8);
-        delOptionsCompact.Controls.Add(chkDelIncludeVersionMetadata, 0, 9);
-        delOptionsCompact.Controls.Add(lblDelMetadataHint, 0, 10);
+        delOptionsCompact.Controls.Add(rbDelPackage, 0, 2);
+        delOptionsCompact.Controls.Add(rbDelExe, 0, 3);
+        delOptionsCompact.Controls.Add(lblDelModeHint, 0, 4);
+        delOptionsCompact.Controls.Add(chkDelCompress, 0, 5);
+        delOptionsCompact.Controls.Add(chkDelIncludeInstructions, 0, 6);
+        delOptionsCompact.Controls.Add(chkDelSignMetadata, 0, 7);
+        delOptionsCompact.Controls.Add(chkDelIncludeSenderDetails, 0, 8);
+        delOptionsCompact.Controls.Add(chkDelIncludeFileList, 0, 9);
+        delOptionsCompact.Controls.Add(chkDelIncludeVersionMetadata, 0, 10);
+        delOptionsCompact.Controls.Add(lblDelMetadataHint, 0, 11);
         var delFinalOutputHost = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = Theme.Bg, Margin = new Padding(0) };
         delFinalOutputHost.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
         delFinalOutputHost.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -11828,26 +11836,22 @@ class MainForm : Form
         return candidate;
     }
 
-    private static string ResolveDeliveryViewerPath()
+    private static string ResolveDeliveryOfflineHtmlPath()
     {
         string self = AppContext.BaseDirectory;
-        string candidate = Path.Combine(self, "ObsidianQ.Extractor.exe");
+        string candidate = Path.Combine(self, "decrypt.html");
         if (File.Exists(candidate)) return candidate;
 
         string repoRoot = Path.GetFullPath(Path.Combine(self, "..", ".."));
         string[] candidates =
         [
-            Path.Combine(repoRoot, "tools", "windows-extractor", "bin", "Release", "net8.0-windows", "win-x64", "publish", "ObsidianQ.Extractor.exe"),
-            Path.Combine(repoRoot, "tools", "windows-extractor", "bin", "Debug", "net8.0-windows", "win-x64", "publish", "ObsidianQ.Extractor.exe"),
-            Path.Combine(repoRoot, "tools", "windows-extractor", "bin", "Debug", "net8.0-windows", "win-x64", "ObsidianQ.Extractor.exe"),
-            Path.Combine(repoRoot, "tools", "windows-extractor", "bin", "Release", "net8.0-windows", "win-x64", "ObsidianQ.Extractor.exe"),
-            Path.Combine(repoRoot, "tools", "windows-extractor", "bin", "Debug", "net8.0-windows", "ObsidianQ.Extractor.exe"),
-            Path.Combine(repoRoot, "tools", "windows-extractor", "bin", "Release", "net8.0-windows", "ObsidianQ.Extractor.exe"),
+            Path.Combine(repoRoot, "web", "offline", "decrypt.html"),
+            Path.Combine(repoRoot, "tools", "windows-gui", "embedded", "ObsidianQ.WebDecrypt.html"),
         ];
         foreach (var c in candidates)
             if (File.Exists(c)) return c;
 
-        string? embedded = TryExtractEmbeddedExtractorStub();
+        string? embedded = TryExtractEmbeddedOfflineDecryptor();
         if (!string.IsNullOrWhiteSpace(embedded) && File.Exists(embedded))
             return embedded;
 
@@ -11894,6 +11898,24 @@ class MainForm : Form
         }
     }
 
+    private static string? TryExtractEmbeddedOfflineDecryptor()
+    {
+        const string resourceName = "ObsidianQ.Launcher.Embedded.ObsidianQ.WebDecrypt.html";
+        try
+        {
+            var asm = Assembly.GetExecutingAssembly();
+            using var stream = asm.GetManifestResourceStream(resourceName);
+            if (stream == null) return null;
+            using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+            string text = reader.ReadToEnd();
+            return WriteEmbeddedTextWithHash("ObsidianQ.WebDecrypt.embedded", text);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private static string? TryExtractEmbeddedCli()
     {
         const string resourceName = "ObsidianQ.Launcher.Embedded.obsidianq.exe";
@@ -11933,6 +11955,28 @@ class MainForm : Form
         if (!File.Exists(outPath))
             File.WriteAllBytes(outPath, bytes);
 
+        return outPath;
+    }
+
+    private static string WriteEmbeddedTextWithHash(string logicalBaseName, string text)
+    {
+        string cacheDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "ObsidianQ",
+            "embedded");
+        Directory.CreateDirectory(cacheDir);
+
+        byte[] bytes = Encoding.UTF8.GetBytes(text);
+        string hashHex;
+        using (var sha = SHA256.Create())
+        {
+            byte[] hash = sha.ComputeHash(bytes);
+            hashHex = Convert.ToHexString(hash).ToLowerInvariant()[..12];
+        }
+
+        string outPath = Path.Combine(cacheDir, $"{logicalBaseName}.{hashHex}.html");
+        if (!File.Exists(outPath))
+            File.WriteAllText(outPath, text, new UTF8Encoding(false));
         return outPath;
     }
 
