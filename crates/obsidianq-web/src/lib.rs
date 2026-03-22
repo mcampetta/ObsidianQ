@@ -133,11 +133,14 @@ fn extract_package_bytes<'a>(bytes: &'a [u8]) -> Result<(&'a [u8], &'static str)
         if read_zip_entry_bytes(bytes, MANIFEST_FILE_NAME).is_ok() {
             return Ok((bytes, "Secure Delivery ZIP"));
         }
+        if let Ok(package_bytes) = extract_package_from_browser_bundle_zip(bytes) {
+            return extract_package_bytes(package_bytes);
+        }
         if let Ok(exe_bytes) = extract_sfx_from_wrapper_zip(bytes) {
             return extract_package_bytes(exe_bytes);
         }
         return Err(js_err(
-            "this ZIP is not a Secure Delivery package. Expected secure_delivery_manifest.json or a wrapped self-extracting package.",
+            "this ZIP is not a Secure Delivery package. Expected secure_delivery_manifest.json, package.zip inside a browser bundle, or a wrapped self-extracting package.",
         ));
     }
     if bytes.len() >= SFX_TRAILER_LEN && &bytes[bytes.len() - 8..] == SFX_MAGIC {
@@ -166,6 +169,27 @@ fn extract_package_bytes<'a>(bytes: &'a [u8]) -> Result<(&'a [u8], &'static str)
     Err(js_err(
         "unsupported file type. Drop a Secure Delivery ZIP or self-extracting EXE package.",
     ))
+}
+
+fn extract_package_from_browser_bundle_zip(package_bytes: &[u8]) -> Result<&[u8]> {
+    let reader = Cursor::new(package_bytes);
+    let mut zip = ZipArchive::new(reader).context("read browser bundle zip")?;
+    for i in 0..zip.len() {
+        let mut entry = zip
+            .by_index(i)
+            .with_context(|| format!("read browser bundle zip entry {i}"))?;
+        let name = entry.name().to_ascii_lowercase();
+        if name != "package.zip" {
+            continue;
+        }
+        let mut nested_package = Vec::new();
+        entry
+            .read_to_end(&mut nested_package)
+            .with_context(|| format!("read browser bundle zip entry {name}"))?;
+        let leaked: &'static [u8] = Box::leak(nested_package.into_boxed_slice());
+        return Ok(leaked);
+    }
+    bail!("browser bundle zip does not contain package.zip");
 }
 
 fn extract_sfx_from_wrapper_zip(package_bytes: &[u8]) -> Result<&[u8]> {
