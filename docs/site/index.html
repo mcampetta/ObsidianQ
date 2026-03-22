@@ -23,7 +23,7 @@
       <p class="eyebrow">ObsidianQ</p>
       <h1>Secure File Encryption for the Modern Era</h1>
       <p class="lead">
-        ObsidianQ combines password workflows, trusted-contact encryption, encrypted vaults, package inspection, and
+        ObsidianQ combines password workflows, trusted-contact recipient encryption, encrypted vaults, package inspection, and
         self-extracting secure delivery in one practical desktop application.
       </p>
       <div class="hero-actions">
@@ -40,7 +40,7 @@
         <h2>What It Solves</h2>
         <p>
           ObsidianQ helps you protect files, text, and portable delivery packages without relying on external cloud key services.
-          It supports both simple password encryption and trusted key-based exchange for teams.
+          It supports both simple password encryption and trusted contact-based exchange for teams.
         </p>
       </article>
       <article class="card">
@@ -56,7 +56,7 @@
     <section class="card">
       <h2>Why Secure Contacts Mode Is Different</h2>
       <ul>
-        <li>Uses recipient key exchange so only trusted contacts can open shared encrypted data.</li>
+        <li>Uses trusted-contact recipient exchange so only approved contacts can open shared encrypted data.</li>
         <li>No password handoff is required in Secure Contacts mode.</li>
       </ul>
     </section>
@@ -64,8 +64,8 @@
     <section class="card">
       <h2>Portable Secure Delivery</h2>
       <ul>
-        <li>Create self-extracting packages directly from the launcher.</li>
-        <li>Choose a portable ZIP archive or a single EXE package for recipients who do not have ObsidianQ installed.</li>
+        <li>Create portable ZIP bundles directly from the launcher.</li>
+        <li>Use single EXE packages only when recipient compatibility requires it.</li>
         <li>Inspect Secure Delivery ZIP and EXE packages before extraction to verify metadata and payload integrity.</li>
       </ul>
     </section>
@@ -123,15 +123,15 @@
     <section class="card">
       <h2>Security Architecture</h2>
       <ul>
-        <li><strong>Post-Quantum Key Exchange:</strong> ML-KEM-768 (Kyber)</li>
+        <li><strong>Recipient Exchange:</strong> Kyber Round 3 via pqcrypto-kyber</li>
         <li><strong>Authenticated Encryption:</strong> XChaCha20-Poly1305</li>
         <li><strong>Password Hardening:</strong> Argon2id</li>
         <li><strong>Hashing & Fingerprints:</strong> BLAKE3</li>
         <li><strong>Chunked Engine:</strong> integrity-oriented large-file processing</li>
       </ul>
       <p class="muted">
-        ObsidianQ is designed for practical security and transparent workflows. Security claims should always be validated
-        against current release notes and code.
+        ObsidianQ has not yet completed a formal third-party audit. Security wording is intentionally conservative and
+        should be validated against current release notes and code.
       </p>
     </section>
 
@@ -157,9 +157,9 @@
     <section class="card">
       <h2>Tabs Overview</h2>
       <div class="table-like">
-        <div><strong>File</strong><span>Encrypt and decrypt files using a password or recipient key exchange with trusted contacts.</span></div>
-        <div><strong>Text</strong><span>Protect short text, clipboard content, or pasted ciphertext using password mode or Secure Contacts key exchange.</span></div>
-        <div><strong>Vault</strong><span>Create and mount encrypted vaults with password protection or Secure Contacts key-based access control.</span></div>
+        <div><strong>File</strong><span>Encrypt and decrypt files using a password or trusted-contact recipient exchange.</span></div>
+        <div><strong>Text</strong><span>Protect short text, clipboard content, or pasted ciphertext using password mode or Secure Contacts recipient exchange.</span></div>
+        <div><strong>Vault</strong><span>Create and mount encrypted vaults with password protection or Secure Contacts recipient access control.</span></div>
         <div><strong>Inspect</strong><span>Review `.obsq`, vault, ZIP package, and Single EXE package metadata without decrypting content.</span></div>
         <div><strong>Self-Extracting Package</strong><span>Create portable ZIP or Single EXE secure-delivery packages for recipients without ObsidianQ.</span></div>
         <div><strong>Secure Contacts</strong><span>Manage your identity and trusted contacts for key-based exchange.</span></div>
@@ -182,7 +182,7 @@
       <article class="card">
         <h2>Version</h2>
         <p><strong>ObsidianQ Version:</strong> 1.0</p>
-        <p>Built for secure, high-performance encryption and post-quantum readiness.</p>
+        <p>Built for local-first encryption, practical verification, and trusted-recipient workflows.</p>
         <p class="muted">Local-first security | Modern cryptography | Trusted file exchange</p>
       </article>
     </section>
