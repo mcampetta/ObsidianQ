@@ -112,12 +112,17 @@ The encrypted payload is password-based today.
 
 The launcher's safer ZIP delivery output is an outer ZIP bundle that contains:
 
-- `Click_Here_to_Decrypt.exe`
-- `obsidianq.exe`
-- `SecureDeliveryPackage.zip`
-- `START_HERE.txt` or `INSTRUCTIONS.txt`
+- `decrypt.html`
+- `package.zip`
+- `README.txt`
 
-This is distinct from the raw Secure Delivery package ZIP. The outer bundle exists to make recipient handling easier without attaching a standalone EXE directly.
+This is distinct from the raw Secure Delivery package ZIP. The outer bundle exists to make recipient handling easier without attaching a standalone executable directly.
+
+The bundled `decrypt.html` is a self-contained offline copy of the browser decryptor:
+
+- no remote scripts, styles, or APIs
+- decryption remains client-side
+- recipients can disconnect from the internet before opening it
 
 ## Single EXE Delivery Structure
 

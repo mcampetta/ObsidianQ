@@ -5,6 +5,12 @@ import init, {
   inspect_secure_delivery
 } from "../pkg/obsidianq_web.js";
 
+declare global {
+  interface Window {
+    __OBSQ_WEB_DECRYPT_CONFIG?: Partial<WebDecryptConfig>;
+  }
+}
+
 type Inspection = {
   kind: string;
   containerType: string;
@@ -44,6 +50,41 @@ type DecryptedEntry = {
   load: () => Promise<Uint8Array>;
 };
 
+type WebDecryptConfig = {
+  title: string;
+  eyebrow: string;
+  heading: string;
+  lede: string;
+  dropTitle: string;
+  dropSubtitle: string;
+  waitingStatus: string;
+  hint: string;
+  showSampleBox: boolean;
+  sampleHref: string;
+  samplePassword: string;
+};
+
+const defaultConfig: WebDecryptConfig = {
+  title: "ObsidianQ Web Decrypt",
+  eyebrow: "ObsidianQ Web Decrypt",
+  heading: "Inspect and decrypt Secure Delivery packages in the browser.",
+  lede:
+    "This tool runs entirely in your browser. No data is uploaded or transmitted. Drop a Secure Delivery ZIP, self-extracting EXE package, or a password-mode .obsq file to inspect it and decrypt locally without running a desktop executable.",
+  dropTitle: "Drop package here",
+  dropSubtitle: "Supports Secure Delivery ZIP, self-extracting EXE packages, and password-mode .obsq files.",
+  waitingStatus: "Waiting for a package.",
+  hint:
+    "Secure Delivery packages are unpacked in-browser after decryption so you can download individual files. Password-mode .obsq files decrypt directly to the original file output.",
+  showSampleBox: true,
+  sampleHref: "./WebDecryptSample_v3_SecureDelivery.zip",
+  samplePassword: "obsidianq-demo"
+};
+
+const config: WebDecryptConfig = {
+  ...defaultConfig,
+  ...(window.__OBSQ_WEB_DECRYPT_CONFIG ?? {})
+};
+
 const LARGE_INPUT_WARNING_BYTES = 128 * 1024 * 1024;
 const LARGE_OUTPUT_WARNING_BYTES = 128 * 1024 * 1024;
 const INLINE_TEXT_PREVIEW_LIMIT = 256 * 1024;
@@ -70,12 +111,10 @@ if (!app) {
 app.innerHTML = `
   <main class="shell">
     <section class="hero">
-      <p class="eyebrow">ObsidianQ Web Decrypt</p>
-      <h1>Inspect and decrypt Secure Delivery packages in the browser.</h1>
+      <p class="eyebrow">${escapeHtml(config.eyebrow)}</p>
+      <h1>${escapeHtml(config.heading)}</h1>
       <p class="lede">
-        This proof of concept runs entirely client-side. Drop a Secure Delivery ZIP,
-        self-extracting EXE package, or a password-mode <code>.obsq</code> file to inspect it and
-        decrypt locally without running a desktop executable.
+        ${escapeHtml(config.lede).replaceAll(".obsq", "<code>.obsq</code>")}
       </p>
     </section>
 
@@ -83,8 +122,8 @@ app.innerHTML = `
         <div id="dropCard" class="card drop-card">
           <div id="dropzone" class="dropzone">
             <div>
-              <p id="dropTitle" class="drop-title">Drop package here</p>
-              <p id="dropSubtitle" class="drop-subtitle">Supports Secure Delivery ZIP, self-extracting EXE packages, and password-mode .obsq files.</p>
+              <p id="dropTitle" class="drop-title">${escapeHtml(config.dropTitle)}</p>
+              <p id="dropSubtitle" class="drop-subtitle">${escapeHtml(config.dropSubtitle).replaceAll(".obsq", "<code>.obsq</code>")}</p>
               <p id="loadedFileName" class="loaded-file hidden"></p>
               <p id="loadedFileHint" class="loaded-hint hidden">Ready to inspect and decrypt.</p>
               <div class="drop-actions">
@@ -94,15 +133,15 @@ app.innerHTML = `
               <input id="fileInput" type="file" hidden />
             </div>
           </div>
-          <p id="status" class="status">Waiting for a package.</p>
+          <p id="status" class="status">${escapeHtml(config.waitingStatus)}</p>
         </div>
 
         <div id="actionCard" class="card action-card">
-          <div id="sampleBox" class="sample-box">
+          <div id="sampleBox" class="sample-box ${config.showSampleBox ? "" : "hidden"}">
             <p class="sample-title">Need a test package?</p>
             <p class="sample-copy">
-              <a class="sample-link" href="./WebDecryptSample_v3_SecureDelivery.zip">Download sample package</a>
-              <span class="sample-password">Password: <code>obsidianq-demo</code></span>
+              <a class="sample-link" href="${escapeHtml(config.sampleHref)}">Download sample package</a>
+              <span class="sample-password">Password: <code>${escapeHtml(config.samplePassword)}</code></span>
             </p>
           </div>
           <label class="field">
@@ -115,8 +154,7 @@ app.innerHTML = `
             <button id="downloadBundleButton" class="mini-button" type="button" disabled>Download</button>
           </div>
           <p class="hint">
-            Secure Delivery packages are unpacked in-browser after decryption so you can download
-            individual files. Password-mode <code>.obsq</code> files decrypt directly to the original file output.
+            ${escapeHtml(config.hint).replaceAll(".obsq", "<code>.obsq</code>")}
           </p>
         </div>
     </section>
@@ -172,6 +210,8 @@ const previewPane = document.querySelector<HTMLElement>("#previewPane")!;
 
 let lastRawOutput: Uint8Array | null = null;
 let activePreviewUrl: string | null = null;
+
+document.title = config.title;
 
 void bootstrap();
 
@@ -654,8 +694,10 @@ function clearLoadedState(): void {
   dropCard.classList.remove("loaded");
   actionCard.classList.remove("loaded");
   dropzone.classList.remove("loaded");
-  sampleBox.classList.remove("hidden");
-  dropTitle.textContent = "Drop package here";
+  if (config.showSampleBox) {
+    sampleBox.classList.remove("hidden");
+  }
+  dropTitle.textContent = config.dropTitle;
   dropSubtitle.classList.remove("hidden");
   loadedFileName.textContent = "";
   loadedFileName.classList.add("hidden");
@@ -680,7 +722,7 @@ function clearLoadedPackage(): void {
   outputEl.textContent = "Drop a package to inspect it.";
   clearLoadedState();
   clearDecryptedPane();
-  setStatus("Waiting for a package.");
+  setStatus(config.waitingStatus);
 }
 
 function setStatus(message: string, isError = false): void {

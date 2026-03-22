@@ -6,8 +6,8 @@
 .DESCRIPTION
     1. Locates cargo and dotnet (adds ~/.cargo/bin to PATH if needed).
     2. Builds obsidianq.exe and obsidianq-bootstrapper.exe (Rust release) from the workspace root.
-    3. Publishes ObsidianQ.Extractor.exe for ZIP delivery bundles.
-    4. Refreshes the launcher's embedded binaries from the current build outputs.
+    3. Publishes ObsidianQ.Extractor.exe for legacy compatibility flows.
+    4. Refreshes the launcher's embedded binaries and offline web decryptor from the current build outputs.
     5. Publishes ObsidianQ.Launcher.exe (C# WinForms, self-contained, single-file).
     6. Stages core bundle files under dist/ObsidianQBundle/.
 
@@ -39,11 +39,13 @@ $RustBootstrapper     = Join-Path $RepoRoot 'target\release\obsidianq-bootstrapp
 $GuiProject           = Join-Path $RepoRoot 'tools\windows-gui\ObsidianQ.Launcher.csproj'
 $ExtractorProject     = Join-Path $RepoRoot 'tools\windows-extractor\ObsidianQ.Extractor.csproj'
 $ExtractorPublish     = Join-Path $RepoRoot 'tools\windows-extractor\bin\Release\net8.0-windows\win-x64\publish\ObsidianQ.Extractor.exe'
+$OfflineDecryptor     = Join-Path $RepoRoot 'web\offline\decrypt.html'
 $GuiPublish           = Join-Path $RepoRoot 'tools\windows-gui\bin\Release\net8.0-windows\win-x64\publish\ObsidianQ.Launcher.exe'
 $EmbeddedDir          = Join-Path $RepoRoot 'tools\windows-gui\embedded'
 $EmbeddedCli          = Join-Path $EmbeddedDir 'obsidianq.exe'
 $EmbeddedBootstrapper = Join-Path $EmbeddedDir 'ObsidianQ.Bootstrapper.exe'
 $EmbeddedExtractor    = Join-Path $EmbeddedDir 'ObsidianQ.Extractor.exe'
+$EmbeddedDecryptor    = Join-Path $EmbeddedDir 'ObsidianQ.WebDecrypt.html'
 
 $BundleDir            = Join-Path $RepoRoot 'dist\ObsidianQBundle'
 
@@ -73,6 +75,7 @@ Write-OK "dotnet: $(& dotnet --version)"
 foreach ($f in @($GuiProject, $ExtractorProject)) {
     if (-not (Test-Path $f)) { Write-Fail "Expected source file not found: $f" }
 }
+if (-not (Test-Path $OfflineDecryptor)) { Write-Fail "Expected offline decryptor not found: $OfflineDecryptor (run npm run build:offline in web/ if needed)" }
 Write-OK "Source files verified"
 
 # ---------------------------------------------------------------------------
@@ -115,9 +118,11 @@ if (-not (Test-Path $EmbeddedDir)) {
 Copy-Item $RustCli $EmbeddedCli -Force
 Copy-Item $RustBootstrapper $EmbeddedBootstrapper -Force
 Copy-Item $ExtractorPublish $EmbeddedExtractor -Force
+Copy-Item $OfflineDecryptor $EmbeddedDecryptor -Force
 Write-OK "Updated embedded obsidianq.exe"
 Write-OK "Updated embedded ObsidianQ.Bootstrapper.exe"
 Write-OK "Updated embedded ObsidianQ.Extractor.exe"
+Write-OK "Updated embedded ObsidianQ.WebDecrypt.html"
 
 # Publish C# GUI (self-contained, single-file)
 # ---------------------------------------------------------------------------

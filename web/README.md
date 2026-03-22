@@ -1,11 +1,12 @@
 # ObsidianQ Web Decrypt
 
-This is a static, GitHub Pages-friendly proof of concept for inspecting and decrypting Secure Delivery packages in the browser.
+This is a static, GitHub Pages-friendly browser decryptor for inspecting and decrypting Secure Delivery packages.
 
 Current scope:
 - inspect Secure Delivery ZIP packages
 - inspect self-extracting EXE packages by extracting the embedded ZIP payload
 - decrypt password-mode Secure Delivery payloads to a plaintext bundle ZIP
+- generate a self-contained offline `decrypt.html` artifact for Secure Delivery ZIP bundles
 
 Not implemented yet:
 - single-file `.obsq` decrypt flow
@@ -32,6 +33,7 @@ Production build:
 ```powershell
 cd web
 npm run build
+npm run build:offline
 ```
 
 ## GitHub Pages
