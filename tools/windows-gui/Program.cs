@@ -11837,6 +11837,8 @@ class MainForm : Form
         string repoRoot = Path.GetFullPath(Path.Combine(self, "..", ".."));
         string[] candidates =
         [
+            Path.Combine(repoRoot, "tools", "windows-extractor", "bin", "Release", "net8.0-windows", "win-x64", "publish", "ObsidianQ.Extractor.exe"),
+            Path.Combine(repoRoot, "tools", "windows-extractor", "bin", "Debug", "net8.0-windows", "win-x64", "publish", "ObsidianQ.Extractor.exe"),
             Path.Combine(repoRoot, "tools", "windows-extractor", "bin", "Debug", "net8.0-windows", "win-x64", "ObsidianQ.Extractor.exe"),
             Path.Combine(repoRoot, "tools", "windows-extractor", "bin", "Release", "net8.0-windows", "win-x64", "ObsidianQ.Extractor.exe"),
             Path.Combine(repoRoot, "tools", "windows-extractor", "bin", "Debug", "net8.0-windows", "ObsidianQ.Extractor.exe"),
