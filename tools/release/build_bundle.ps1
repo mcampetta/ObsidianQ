@@ -6,9 +6,10 @@
 .DESCRIPTION
     1. Locates cargo and dotnet (adds ~/.cargo/bin to PATH if needed).
     2. Builds obsidianq.exe and obsidianq-bootstrapper.exe (Rust release) from the workspace root.
-    3. Refreshes the launcher's embedded binaries from the current Rust build outputs.
-    4. Publishes ObsidianQ.Launcher.exe (C# WinForms, self-contained, single-file).
-    5. Stages core bundle files under dist/ObsidianQBundle/.
+    3. Publishes ObsidianQ.Extractor.exe for ZIP delivery bundles.
+    4. Refreshes the launcher's embedded binaries from the current build outputs.
+    5. Publishes ObsidianQ.Launcher.exe (C# WinForms, self-contained, single-file).
+    6. Stages core bundle files under dist/ObsidianQBundle/.
 
 .EXAMPLE
     # From repo root:
@@ -36,10 +37,13 @@ $RepoRoot  = Split-Path (Split-Path $ScriptDir -Parent) -Parent
 $RustCli              = Join-Path $RepoRoot 'target\release\obsidianq.exe'
 $RustBootstrapper     = Join-Path $RepoRoot 'target\release\obsidianq-bootstrapper.exe'
 $GuiProject           = Join-Path $RepoRoot 'tools\windows-gui\ObsidianQ.Launcher.csproj'
+$ExtractorProject     = Join-Path $RepoRoot 'tools\windows-extractor\ObsidianQ.Extractor.csproj'
+$ExtractorPublish     = Join-Path $RepoRoot 'tools\windows-extractor\bin\Release\net8.0-windows\win-x64\publish\ObsidianQ.Extractor.exe'
 $GuiPublish           = Join-Path $RepoRoot 'tools\windows-gui\bin\Release\net8.0-windows\win-x64\publish\ObsidianQ.Launcher.exe'
 $EmbeddedDir          = Join-Path $RepoRoot 'tools\windows-gui\embedded'
 $EmbeddedCli          = Join-Path $EmbeddedDir 'obsidianq.exe'
 $EmbeddedBootstrapper = Join-Path $EmbeddedDir 'ObsidianQ.Bootstrapper.exe'
+$EmbeddedExtractor    = Join-Path $EmbeddedDir 'ObsidianQ.Extractor.exe'
 
 $BundleDir            = Join-Path $RepoRoot 'dist\ObsidianQBundle'
 
@@ -66,7 +70,7 @@ if (-not $dotnet) { Write-Fail "dotnet not found. Install .NET 8 SDK from https:
 Write-OK "dotnet: $(& dotnet --version)"
 
 # Confirm source files exist
-foreach ($f in @($GuiProject)) {
+foreach ($f in @($GuiProject, $ExtractorProject)) {
     if (-not (Test-Path $f)) { Write-Fail "Expected source file not found: $f" }
 }
 Write-OK "Source files verified"
@@ -89,6 +93,17 @@ Write-OK "obsidianq.exe built  ($rustSize MB)"
 Write-OK "obsidianq-bootstrapper.exe built  ($bootstrapperSize MB)"
 
 # ---------------------------------------------------------------------------
+# Publish ZIP bundle viewer (self-contained, single-file)
+# ---------------------------------------------------------------------------
+Write-Step "Publishing ZIP bundle viewer (Release, win-x64, single-file)"
+& dotnet publish $ExtractorProject -c Release --nologo
+
+if ($LASTEXITCODE -ne 0) { Write-Fail "dotnet publish failed for extractor (exit $LASTEXITCODE)" }
+if (-not (Test-Path $ExtractorPublish)) { Write-Fail "Expected extractor not found after publish: $ExtractorPublish" }
+
+$extractorSize = [math]::Round((Get-Item $ExtractorPublish).Length / 1MB, 2)
+Write-OK "ObsidianQ.Extractor.exe published  ($extractorSize MB)"
+
 # Refresh embedded launcher binaries
 # ---------------------------------------------------------------------------
 Write-Step "Refreshing embedded launcher binaries"
@@ -99,8 +114,10 @@ if (-not (Test-Path $EmbeddedDir)) {
 
 Copy-Item $RustCli $EmbeddedCli -Force
 Copy-Item $RustBootstrapper $EmbeddedBootstrapper -Force
+Copy-Item $ExtractorPublish $EmbeddedExtractor -Force
 Write-OK "Updated embedded obsidianq.exe"
 Write-OK "Updated embedded ObsidianQ.Bootstrapper.exe"
+Write-OK "Updated embedded ObsidianQ.Extractor.exe"
 
 # Publish C# GUI (self-contained, single-file)
 # ---------------------------------------------------------------------------

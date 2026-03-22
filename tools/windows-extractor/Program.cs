@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using System.Text;
 
 [assembly: System.Runtime.Versioning.SupportedOSPlatform("windows")]
@@ -11,28 +12,36 @@ static class Program
     private const int EmbeddedSfxTrailerSize = 24; // zipLen(8) + cliLen(8) + magic(8)
 
     private sealed record EmbeddedSfxInfo(long PackageOffset, long PackageLength, long CliOffset, long CliLength);
+    private sealed record PackageSummary(string PackageId, string PackageName, string Sender, string Created, string AppVersion, string RecipientMode, List<string> Files, bool Signed, bool SenderIdentityPresent);
 
     [STAThread]
-    static void Main()
+    static void Main(string[] args)
     {
         Application.SetHighDpiMode(HighDpiMode.SystemAware);
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
 
         string hostExePath = Environment.ProcessPath ?? Application.ExecutablePath;
-        if (!TryGetEmbeddedSfxInfo(hostExePath, out var sfxInfo))
+        if (TryGetEmbeddedSfxInfo(hostExePath, out var sfxInfo))
         {
-            MessageBox.Show(
-                "This executable does not contain an embedded package payload.",
-                "ObsidianQ Extractor",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Error);
-            Environment.Exit(2);
+            RunEmbeddedSfxExtractor(hostExePath, sfxInfo);
+            Environment.Exit(0);
             return;
         }
 
-        RunEmbeddedSfxExtractor(hostExePath, sfxInfo);
-        Environment.Exit(0);
+        if (TryResolveExternalBundle(hostExePath, args, out var pkgPath, out var cliPath))
+        {
+            RunPackageExtractor(hostExePath, cliPath, pkgPath);
+            Environment.Exit(0);
+            return;
+        }
+
+        MessageBox.Show(
+            "This viewer could not find an embedded package or a sibling Secure Delivery bundle. Keep Click_Here_to_Decrypt.exe, the packaged ZIP, and obsidianq.exe in the same folder.",
+            "ObsidianQ Extractor",
+            MessageBoxButtons.OK,
+            MessageBoxIcon.Error);
+        Environment.Exit(2);
     }
 
     private static bool TryGetEmbeddedSfxInfo(string hostExePath, out EmbeddedSfxInfo info)
@@ -85,7 +94,141 @@ static class Program
         }
     }
 
-    private static string? PromptForPassword()
+    private static bool TryResolveExternalBundle(string hostExePath, string[] args, out string packagePath, out string cliPath)
+    {
+        packagePath = string.Empty;
+        cliPath = string.Empty;
+
+        string baseDir = Path.GetDirectoryName(hostExePath) ?? AppContext.BaseDirectory;
+        string cliCandidate = Path.Combine(baseDir, "obsidianq.exe");
+        if (!File.Exists(cliCandidate))
+            return false;
+
+        string? explicitArg = args.FirstOrDefault(a => File.Exists(a) && string.Equals(Path.GetExtension(a), ".zip", StringComparison.OrdinalIgnoreCase));
+        if (!string.IsNullOrWhiteSpace(explicitArg))
+        {
+            packagePath = explicitArg;
+            cliPath = cliCandidate;
+            return true;
+        }
+
+        string namedBundle = Path.Combine(baseDir, "SecureDeliveryPackage.zip");
+        if (File.Exists(namedBundle))
+        {
+            packagePath = namedBundle;
+            cliPath = cliCandidate;
+            return true;
+        }
+
+        string[] candidatePackages = Directory.GetFiles(baseDir, "*.zip")
+            .Where(p => !string.Equals(Path.GetFileName(p), "SecureDeliveryPackage.zip", StringComparison.OrdinalIgnoreCase))
+            .Where(p => !string.Equals(Path.GetFileName(p), Path.GetFileName(hostExePath), StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (candidatePackages.Length == 1)
+        {
+            packagePath = candidatePackages[0];
+            cliPath = cliCandidate;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static string BuildSummaryText(PackageSummary summary)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("Secure Delivery Package");
+        sb.AppendLine();
+        sb.AppendLine($"Package name: {summary.PackageName}");
+        sb.AppendLine($"Package ID: {summary.PackageId}");
+        sb.AppendLine($"Signing identity: {summary.Sender}");
+        sb.AppendLine($"Created: {summary.Created}");
+        sb.AppendLine($"Created by version: {summary.AppVersion}");
+        sb.AppendLine($"Recipient mode: {summary.RecipientMode}");
+        sb.AppendLine();
+        sb.AppendLine("Files:");
+        if (summary.Files.Count == 0) sb.AppendLine("- (not listed)");
+        else
+        {
+            foreach (string file in summary.Files.Take(12))
+                sb.AppendLine($"- {file}");
+            if (summary.Files.Count > 12)
+                sb.AppendLine($"- ... and {summary.Files.Count - 12} more");
+        }
+        sb.AppendLine();
+        sb.AppendLine("Verification:");
+        if (summary.Signed) sb.AppendLine("- Package signature valid");
+        if (summary.SenderIdentityPresent) sb.AppendLine("- Signing identity present");
+        sb.AppendLine("- Contents match manifest");
+        sb.AppendLine("- No tampering detected");
+        return sb.ToString();
+    }
+
+    private static void ShowPackageSummary(PackageSummary summary)
+    {
+        using var dlg = new Form
+        {
+            Text = "Package Information",
+            StartPosition = FormStartPosition.CenterParent,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox = false,
+            MinimizeBox = false,
+            ShowInTaskbar = false,
+            ClientSize = new Size(404, 274),
+            BackColor = Theme.Bg,
+            ForeColor = Theme.TextMain,
+            Font = Theme.SafeMono(9f),
+        };
+        try
+        {
+            var ico = Icon.ExtractAssociatedIcon(Environment.ProcessPath ?? Application.ExecutablePath);
+            if (ico != null) dlg.Icon = ico;
+        }
+        catch { }
+
+        var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, Padding = new Padding(12), BackColor = Theme.Bg };
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+
+        var lbl = new Label
+        {
+            Text = "Package Information",
+            Dock = DockStyle.Fill,
+            TextAlign = ContentAlignment.MiddleLeft,
+            BackColor = Theme.Bg,
+            ForeColor = Theme.Accent,
+            Font = Theme.SafeMono(9f),
+        };
+        var txt = new ThemedSummaryView
+        {
+            Dock = DockStyle.Fill,
+            BackColor = Theme.Surface,
+            ForeColor = Theme.TextMain,
+            Font = Theme.SafeMono(8.25f),
+            SummaryText = BuildSummaryText(summary),
+            Margin = new Padding(6, 6, 6, 4),
+        };
+        var btnClose = new NeonButton
+        {
+            Text = "CLOSE",
+            Anchor = AnchorStyles.Right | AnchorStyles.Top,
+            Size = new Size(96, 28),
+            Location = new Point(278, 4),
+            Margin = new Padding(0),
+        };
+        btnClose.Click += (_, _) => dlg.Close();
+        var actions = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg };
+        actions.Controls.Add(btnClose);
+
+        root.Controls.Add(lbl, 0, 0);
+        root.Controls.Add(txt, 0, 1);
+        root.Controls.Add(actions, 0, 2);
+        dlg.Controls.Add(root);
+        dlg.ShowDialog();
+    }
+
+    private static string? PromptForPassword(PackageSummary? summary = null)
     {
         using var dlg = new Form
         {
@@ -129,15 +272,18 @@ static class Program
             BorderStyle = BorderStyle.FixedSingle,
             BackColor = Theme.Surface,
             ForeColor = Theme.Accent,
-            Font = Theme.SafeMono(9f),
+            Font = Theme.SafeMono(12f),
         };
-        var actions = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = Theme.Bg };
-        actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        int actionColumns = summary == null ? 2 : 3;
+        var actions = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = actionColumns, RowCount = 1, BackColor = Theme.Bg };
+        for (int i = 0; i < actionColumns; i++)
+            actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f / actionColumns));
 
         var btnCancel = new NeonButton { Text = "CANCEL", Dock = DockStyle.Fill, Margin = new Padding(0, 0, 4, 0) };
+        var btnInfo = new NeonButton { Text = "INFO", Dock = DockStyle.Fill, Margin = new Padding(2, 0, 2, 0) };
         var btnOk = new NeonButton { Text = "DECRYPT", Dock = DockStyle.Fill, Margin = new Padding(4, 0, 0, 0) };
         btnCancel.Click += (_, _) => { dlg.DialogResult = DialogResult.Cancel; dlg.Close(); };
+        btnInfo.Click += (_, _) => { if (summary != null) ShowPackageSummary(summary); };
         btnOk.Click += (_, _) =>
         {
             if (string.IsNullOrWhiteSpace(txt.Text))
@@ -150,7 +296,15 @@ static class Program
         };
 
         actions.Controls.Add(btnCancel, 0, 0);
-        actions.Controls.Add(btnOk, 1, 0);
+        if (summary != null)
+        {
+            actions.Controls.Add(btnInfo, 1, 0);
+            actions.Controls.Add(btnOk, 2, 0);
+        }
+        else
+        {
+            actions.Controls.Add(btnOk, 1, 0);
+        }
         root.Controls.Add(lbl, 0, 0);
         root.Controls.Add(txt, 0, 1);
         root.Controls.Add(new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg }, 0, 2);
@@ -162,19 +316,38 @@ static class Program
 
     private static void RunEmbeddedSfxExtractor(string hostExePath, EmbeddedSfxInfo sfx)
     {
-        string? password = PromptForPassword();
-        if (password == null) return;
-
         string tempRoot = Path.Combine(Path.GetTempPath(), $"obsq_sfx_run_{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempRoot);
         string pkgPath = Path.Combine(tempRoot, "package.zip");
         string cliPath = Path.Combine(tempRoot, "obsidianq.exe");
-        string probeOutDir = Path.Combine(tempRoot, "probe_out");
 
         try
         {
             CopyRangeToFile(hostExePath, sfx.PackageOffset, sfx.PackageLength, pkgPath);
             CopyRangeToFile(hostExePath, sfx.CliOffset, sfx.CliLength, cliPath);
+            RunPackageExtractor(hostExePath, cliPath, pkgPath);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "ObsidianQ", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            try { Directory.Delete(tempRoot, recursive: true); } catch { }
+        }
+    }
+
+    private static void RunPackageExtractor(string hostExePath, string cliPath, string pkgPath)
+    {
+        string tempRoot = Path.Combine(Path.GetTempPath(), $"obsq_extract_run_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempRoot);
+        string probeOutDir = Path.Combine(tempRoot, "probe_out");
+
+        try
+        {
+            PackageSummary summary = InspectPackageSummary(cliPath, pkgPath);
+            string? password = PromptForPassword(summary);
+            if (password == null) return;
 
             var psi = new ProcessStartInfo
             {
@@ -187,7 +360,7 @@ static class Program
                 CreateNoWindow = true,
             };
             using var proc = Process.Start(psi);
-            if (proc == null) throw new InvalidOperationException("Failed to start embedded extractor.");
+            if (proc == null) throw new InvalidOperationException("Failed to start delivery extractor.");
 
             proc.StandardInput.WriteLine(password);
             proc.StandardInput.Close();
@@ -210,8 +383,10 @@ static class Program
             }
 
             string baseDir = Path.GetDirectoryName(hostExePath) ?? Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-            string stem = Path.GetFileNameWithoutExtension(hostExePath);
-            string defaultOutDir = Path.Combine(baseDir, $"{stem}_Extracted");
+            string packageStem = string.IsNullOrWhiteSpace(summary.PackageName)
+                ? Path.GetFileNameWithoutExtension(hostExePath)
+                : summary.PackageName.Trim();
+            string defaultOutDir = Path.Combine(baseDir, $"{packageStem}_Extracted");
 
             var pick = MessageBox.Show(
                 "Password Verified.\n\nDecrypt file/files to the same folder?",
@@ -241,14 +416,79 @@ static class Program
             MessageBox.Show("Decryption complete.", "ObsidianQ", MessageBoxButtons.OK, MessageBoxIcon.Information);
             try { Process.Start(new ProcessStartInfo("explorer.exe", $"\"{outDir}\"") { UseShellExecute = true }); } catch { }
         }
-        catch (Exception ex)
-        {
-            MessageBox.Show(ex.Message, "ObsidianQ", MessageBoxButtons.OK, MessageBoxIcon.Error);
-        }
         finally
         {
             try { Directory.Delete(tempRoot, recursive: true); } catch { }
         }
+    }
+
+    private static JsonElement RunDeliveryJson(string cliPath, string pkgPath, string subcommand)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = cliPath,
+            Arguments = $"delivery {subcommand} \"{pkgPath}\" --json",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
+        using var proc = Process.Start(psi) ?? throw new InvalidOperationException($"Failed to start delivery {subcommand}.");
+        string stdout = proc.StandardOutput.ReadToEnd();
+        string stderr = proc.StandardError.ReadToEnd();
+        proc.WaitForExit();
+        if (proc.ExitCode != 0)
+        {
+            string detail = string.IsNullOrWhiteSpace(stderr) ? stdout.Trim() : stderr.Trim();
+            throw new InvalidOperationException(string.IsNullOrWhiteSpace(detail) ? $"delivery {subcommand} failed." : detail);
+        }
+        using var doc = JsonDocument.Parse(stdout);
+        return doc.RootElement.Clone();
+    }
+
+    private static PackageSummary InspectPackageSummary(string cliPath, string pkgPath)
+    {
+        JsonElement inspect = RunDeliveryJson(cliPath, pkgPath, "inspect");
+        _ = RunDeliveryJson(cliPath, pkgPath, "verify");
+        JsonElement data = inspect.GetProperty("data");
+
+        string packageId = data.TryGetProperty("package_uuid", out var packageIdEl) && !string.IsNullOrWhiteSpace(packageIdEl.GetString())
+            ? packageIdEl.GetString()!
+            : "-";
+        string packageName = data.TryGetProperty("package_name", out var packageNameEl) && !string.IsNullOrWhiteSpace(packageNameEl.GetString())
+            ? packageNameEl.GetString()!
+            : Path.GetFileNameWithoutExtension(pkgPath);
+        string sender = data.TryGetProperty("sender_name", out var senderEl) && !string.IsNullOrWhiteSpace(senderEl.GetString())
+            ? senderEl.GetString()!
+            : "Unknown Sender";
+        string created = data.TryGetProperty("created_utc", out var createdEl)
+            ? FormatUtcForDisplay(createdEl.GetString() ?? string.Empty)
+            : "-";
+        string appVersion = data.TryGetProperty("obsidianq_version", out var appVersionEl) && !string.IsNullOrWhiteSpace(appVersionEl.GetString())
+            ? appVersionEl.GetString()!
+            : "-";
+        string recipientMode = data.TryGetProperty("recipient_mode", out var recipientModeEl) && !string.IsNullOrWhiteSpace(recipientModeEl.GetString())
+            ? recipientModeEl.GetString()!
+            : "-";
+        bool signed = data.TryGetProperty("signed", out var signedEl) && signedEl.ValueKind == JsonValueKind.True;
+        bool senderIdentityPresent = data.TryGetProperty("sender_fingerprint", out var fpEl) && !string.IsNullOrWhiteSpace(fpEl.GetString());
+        var files = new List<string>();
+        if (data.TryGetProperty("files", out var filesEl) && filesEl.ValueKind == JsonValueKind.Array)
+        {
+            foreach (JsonElement file in filesEl.EnumerateArray())
+            {
+                if (file.TryGetProperty("path", out var pathEl) && !string.IsNullOrWhiteSpace(pathEl.GetString()))
+                    files.Add(pathEl.GetString()!);
+            }
+        }
+        return new PackageSummary(packageId, packageName, sender, created, appVersion, recipientMode, files, signed, senderIdentityPresent);
+    }
+
+    private static string FormatUtcForDisplay(string raw)
+    {
+        string trimmed = raw.Trim();
+        if (trimmed.Length == 0) return "-";
+        return trimmed.Replace("T", " ").Replace("+00:00", " UTC").Replace("Z", " UTC");
     }
 
     private static void MoveExtractedContentsSafe(string sourceRoot, string targetRoot)
@@ -316,6 +556,7 @@ static class Theme
     public static readonly Color Surface   = Color.FromArgb(0xFF, 0x0B, 0x12, 0x0F);
     public static readonly Color Border    = Color.FromArgb(0xFF, 0x00, 0x55, 0x30);
     public static readonly Color Accent    = Color.FromArgb(0xFF, 0x00, 0xFF, 0x7A);
+    public static readonly Color AccentHot = Color.FromArgb(0xFF, 0x00, 0xFF, 0x9A);
     public static readonly Color AccentDim = Color.FromArgb(0xFF, 0x00, 0xAA, 0x50);
     public static readonly Color TextMain  = Color.FromArgb(0xFF, 0xCC, 0xFF, 0xDD);
     public static readonly Color TextDim   = Color.FromArgb(0xFF, 0x44, 0x77, 0x55);
@@ -380,5 +621,196 @@ class NeonButton : Button
             TextFormatFlags.VerticalCenter |
             TextFormatFlags.EndEllipsis |
             TextFormatFlags.NoPrefix);
+    }
+}
+
+class ThemedSummaryView : Control
+{
+    private List<string> _lines = new();
+    private int _scrollLine;
+    private const int PaddingSize = 8;
+    private const int ScrollbarWidth = 10;
+
+    public string SummaryText
+    {
+        get => string.Join(Environment.NewLine, _lines);
+        set
+        {
+            _lines = value.Replace("\r\n", "\n").Split('\n').ToList();
+            _scrollLine = 0;
+            Invalidate();
+        }
+    }
+
+    public ThemedSummaryView()
+    {
+        BackColor = Theme.Surface;
+        ForeColor = Theme.TextMain;
+        Font = Theme.SafeMono(8.25f);
+        TabStop = true;
+        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+    }
+
+    protected override void OnMouseWheel(MouseEventArgs e)
+    {
+        ScrollBy(e.Delta > 0 ? -3 : 3);
+        base.OnMouseWheel(e);
+    }
+
+    protected override void OnMouseDown(MouseEventArgs e)
+    {
+        Focus();
+        if (TryHandleScrollbarClick(e.Location))
+            return;
+        base.OnMouseDown(e);
+    }
+
+    protected override bool IsInputKey(Keys keyData)
+    {
+        return keyData is Keys.Up or Keys.Down or Keys.PageUp or Keys.PageDown or Keys.Home or Keys.End || base.IsInputKey(keyData);
+    }
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        switch (e.KeyCode)
+        {
+            case Keys.Up:
+                ScrollBy(-1);
+                e.Handled = true;
+                break;
+            case Keys.Down:
+                ScrollBy(1);
+                e.Handled = true;
+                break;
+            case Keys.PageUp:
+                ScrollBy(-VisibleLineCount());
+                e.Handled = true;
+                break;
+            case Keys.PageDown:
+                ScrollBy(VisibleLineCount());
+                e.Handled = true;
+                break;
+            case Keys.Home:
+                _scrollLine = 0;
+                Invalidate();
+                e.Handled = true;
+                break;
+            case Keys.End:
+                _scrollLine = MaxScrollLine();
+                Invalidate();
+                e.Handled = true;
+                break;
+        }
+        base.OnKeyDown(e);
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var g = e.Graphics;
+        g.Clear(Theme.Bg);
+
+        Rectangle outer = ClientRectangle;
+        if (outer.Width <= 2 || outer.Height <= 2)
+            return;
+
+        Rectangle panel = new Rectangle(outer.X, outer.Y, outer.Width - 1, outer.Height - 1);
+        using (var fill = new SolidBrush(Theme.Surface))
+            g.FillRectangle(fill, panel);
+        using (var pen = new Pen(Theme.AccentDim, 1f) { Alignment = System.Drawing.Drawing2D.PenAlignment.Inset })
+            g.DrawRectangle(pen, panel);
+
+        Rectangle content = Rectangle.Inflate(panel, -PaddingSize, -PaddingSize);
+        bool overflow = MaxScrollLine() > 0;
+        Rectangle textRect = content;
+        Rectangle trackRect = Rectangle.Empty;
+
+        if (overflow)
+        {
+            trackRect = new Rectangle(content.Right - ScrollbarWidth, content.Top, ScrollbarWidth, content.Height);
+            textRect.Width -= ScrollbarWidth + 6;
+        }
+
+        TextRenderer.DrawText(
+            g,
+            VisibleText(),
+            Font,
+            textRect,
+            Theme.TextMain,
+            TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding);
+
+        if (overflow)
+            DrawScrollbar(g, trackRect);
+    }
+
+    private int VisibleLineCount()
+    {
+        int lineHeight = TextRenderer.MeasureText("Ag", Font, new Size(int.MaxValue, int.MaxValue), TextFormatFlags.NoPadding).Height + 1;
+        int available = Math.Max(1, Height - (PaddingSize * 2));
+        return Math.Max(1, available / Math.Max(1, lineHeight));
+    }
+
+    private int MaxScrollLine() => Math.Max(0, _lines.Count - VisibleLineCount());
+
+    private string VisibleText()
+    {
+        int visible = VisibleLineCount();
+        _scrollLine = Math.Clamp(_scrollLine, 0, MaxScrollLine());
+        return string.Join(Environment.NewLine, _lines.Skip(_scrollLine).Take(visible));
+    }
+
+    private void ScrollBy(int delta)
+    {
+        int next = Math.Clamp(_scrollLine + delta, 0, MaxScrollLine());
+        if (next == _scrollLine)
+            return;
+        _scrollLine = next;
+        Invalidate();
+    }
+
+    private bool TryHandleScrollbarClick(Point location)
+    {
+        if (MaxScrollLine() <= 0)
+            return false;
+
+        Rectangle content = Rectangle.Inflate(ClientRectangle, -PaddingSize, -PaddingSize);
+        Rectangle trackRect = new Rectangle(content.Right - ScrollbarWidth, content.Top, ScrollbarWidth, content.Height);
+        if (!trackRect.Contains(location))
+            return false;
+
+        Rectangle thumb = ThumbRect(trackRect);
+        if (location.Y < thumb.Top)
+            ScrollBy(-VisibleLineCount());
+        else if (location.Y > thumb.Bottom)
+            ScrollBy(VisibleLineCount());
+        else
+        {
+            float ratio = (float)(location.Y - trackRect.Top) / Math.Max(1, trackRect.Height);
+            _scrollLine = Math.Clamp((int)Math.Round(ratio * MaxScrollLine()), 0, MaxScrollLine());
+            Invalidate();
+        }
+        return true;
+    }
+
+    private Rectangle ThumbRect(Rectangle trackRect)
+    {
+        int visible = VisibleLineCount();
+        int total = Math.Max(visible, _lines.Count);
+        int thumbHeight = Math.Max(28, (int)Math.Round(trackRect.Height * (visible / (float)total)));
+        int maxTravel = Math.Max(1, trackRect.Height - thumbHeight);
+        int top = trackRect.Top + (int)Math.Round(maxTravel * (_scrollLine / (float)Math.Max(1, MaxScrollLine())));
+        return new Rectangle(trackRect.X, top, trackRect.Width, thumbHeight);
+    }
+
+    private void DrawScrollbar(Graphics g, Rectangle trackRect)
+    {
+        using var trackBrush = new SolidBrush(Theme.Bg);
+        using var thumbBrush = new SolidBrush(Theme.Accent);
+        using var borderPen = new Pen(Theme.AccentDim, 1f) { Alignment = System.Drawing.Drawing2D.PenAlignment.Inset };
+        g.FillRectangle(trackBrush, trackRect);
+        g.DrawRectangle(borderPen, trackRect.X, trackRect.Y, trackRect.Width - 1, trackRect.Height - 1);
+        Rectangle thumb = ThumbRect(trackRect);
+        g.FillRectangle(thumbBrush, thumb);
+        using var thumbPen = new Pen(Theme.AccentHot, 1f) { Alignment = System.Drawing.Drawing2D.PenAlignment.Inset };
+        g.DrawRectangle(thumbPen, thumb.X, thumb.Y, thumb.Width - 1, thumb.Height - 1);
     }
 }

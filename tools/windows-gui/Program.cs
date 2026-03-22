@@ -2214,6 +2214,7 @@ class MainForm : Form
 
     private static readonly string ExePath = ResolveExePath();
     private static readonly string ExtractorStubPath = ResolveExtractorStubPath();
+    private static readonly string DeliveryViewerPath = ResolveDeliveryViewerPath();
     private static readonly string LocalKeysDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "ObsidianQ", "keys");
@@ -5510,7 +5511,7 @@ class MainForm : Form
         {
             Dock = DockStyle.Fill,
             Margin = new Padding(0, 2, 0, 2),
-            Filter = "Supported containers|*.obsq;*.vault;*.obsqv;*.zip;*.exe|ObsidianQ files|*.obsq|Vault files|*.vault;*.obsqv|Self-Extracting Package|*_SecureDelivery.zip;*.zip;*_SecureDelivery.exe;*.exe|All files|*.*",
+            Filter = "Supported containers|*.obsq;*.vault;*.obsqv;*.zip;*.exe|ObsidianQ files|*.obsq|Vault files|*.vault;*.obsqv|Secure Delivery Package|*_SecureDelivery.zip;*.zip;*_SecureDelivery.exe;*.exe|All files|*.*",
         };
         var txtInspectPath = MakeTextBox();
         txtInspectPath.ReadOnly = true;
@@ -5772,7 +5773,7 @@ class MainForm : Form
 
             if (isExe && TryGetEmbeddedSfxInfoForInspect(path, out var pkgOff, out var pkgLen, out _, out _))
             {
-                lblInspectTypeVal.Text = "Self-Extracting Package (EXE)";
+                lblInspectTypeVal.Text = "Secure Delivery Package (EXE)";
                 lblInspectModeVal.Text = "Password";
 
                 string? tempZip = null;
@@ -5781,7 +5782,7 @@ class MainForm : Form
                     if (!TryExtractEmbeddedPackageZip(path, pkgOff, pkgLen, out var extractedZip))
                     {
                         lblInspectVersionVal.Text = "Unknown";
-                        sb.AppendLine("Container: Self-Extracting Package (EXE)");
+                        sb.AppendLine("Container: Secure Delivery Package (EXE)");
                         sb.AppendLine("Embedded package: detected");
                         sb.AppendLine("Inspect detail: failed to extract embedded package segment.");
                         rtbInspect.Text = sb.ToString();
@@ -5852,7 +5853,7 @@ class MainForm : Form
                     var senderMatch = await ResolveSignedSenderAsync(senderFingerprint, senderName, senderEmail, senderDevice);
 
                     lblInspectVersionVal.Text = schema;
-                    sb.AppendLine("Container: Self-Extracting Package (EXE)");
+                    sb.AppendLine("Container: Secure Delivery Package (EXE)");
                     sb.AppendLine($"Schema version: {schema}");
                     sb.AppendLine($"Package ID: {packageUuid}");
                     sb.AppendLine($"Created: {createdUtc}");
@@ -5888,7 +5889,7 @@ class MainForm : Form
                     sb.AppendLine($"{(verifyOk ? "✓" : "X")} {(verifyOk ? "No tampering detected" : "Tampering or manifest verification failed")}");
                     if (verifyOk)
                     {
-                        InspectStatus("Self-Extracting EXE package verified.");
+                        InspectStatus("Secure Delivery EXE package verified.");
                     }
                     else
                     {
@@ -5902,7 +5903,7 @@ class MainForm : Form
                         }
                         catch { }
                         sb.AppendLine($"Integrity: FAILED ({verifyErr})");
-                        InspectStatus("Self-Extracting EXE package verification failed.", error: true);
+                        InspectStatus("Secure Delivery EXE package verification failed.", error: true);
                     }
 
                     rtbInspect.Text = sb.ToString();
@@ -5918,6 +5919,7 @@ class MainForm : Form
             {
                 bool looksLikeDelivery = false;
                 bool looksLikeWrappedExe = false;
+                bool looksLikeDeliveryBundle = false;
                 try
                 {
                     using var zf = ZipFile.OpenRead(path);
@@ -5925,12 +5927,14 @@ class MainForm : Form
                         string.Equals(e.FullName, "secure_delivery_manifest.json", StringComparison.OrdinalIgnoreCase));
                     looksLikeWrappedExe = zf.Entries.Any(e =>
                         string.Equals(Path.GetFileName(e.FullName), "Click_Here_to_Decrypt.exe", StringComparison.OrdinalIgnoreCase));
+                    looksLikeDeliveryBundle = zf.Entries.Any(e =>
+                        string.Equals(Path.GetFileName(e.FullName), "SecureDeliveryPackage.zip", StringComparison.OrdinalIgnoreCase));
                 }
                 catch { /* not a valid zip or inaccessible */ }
 
                 if (looksLikeDelivery)
                 {
-                    lblInspectTypeVal.Text = "Self-Extracting Package";
+                    lblInspectTypeVal.Text = "Secure Delivery Package";
                     lblInspectModeVal.Text = "Password";
 
                     var (dCode, dStdout, dStderr) = await RunInspectCliAsync($"delivery inspect --json \"{path}\"");
@@ -5995,7 +5999,7 @@ class MainForm : Form
                     var senderMatch = await ResolveSignedSenderAsync(senderFingerprint, senderName, senderEmail, senderDevice);
 
                     lblInspectVersionVal.Text = schema;
-                    sb.AppendLine("Container: Self-Extracting Package");
+                    sb.AppendLine("Container: Secure Delivery Package");
                     sb.AppendLine($"Schema version: {schema}");
                     sb.AppendLine($"Package ID: {packageUuid}");
                     sb.AppendLine($"Created: {createdUtc}");
@@ -6031,7 +6035,7 @@ class MainForm : Form
                     sb.AppendLine($"{(verifyOk ? "✓" : "X")} {(verifyOk ? "No tampering detected" : "Tampering or manifest verification failed")}");
                     if (verifyOk)
                     {
-                        InspectStatus("Self-Extracting package verified.");
+                        InspectStatus("Secure Delivery package verified.");
                     }
                     else
                     {
@@ -6045,61 +6049,80 @@ class MainForm : Form
                         }
                         catch { /* keep stderr fallback */ }
                         sb.AppendLine($"Integrity: FAILED ({verifyErr})");
-                        InspectStatus("Self-Extracting package verification failed.", error: true);
+                        InspectStatus("Secure Delivery package verification failed.", error: true);
                     }
 
                     rtbInspect.Text = sb.ToString();
                     return;
                 }
 
-                if (looksLikeWrappedExe)
+                if (looksLikeWrappedExe || looksLikeDeliveryBundle)
                 {
                     string? tempExe = null;
                     string? tempZip = null;
                     try
                     {
-                        if (!TryExtractZipEntryToTempFile(path, "Click_Here_to_Decrypt.exe", ".exe", out var extractedExe))
+                        if (looksLikeDeliveryBundle)
                         {
-                            lblInspectTypeVal.Text = "Self-Extracting Package (ZIP)";
+                            if (!TryExtractZipEntryToTempFile(path, "SecureDeliveryPackage.zip", ".zip", out var extractedBundle))
+                            {
+                                lblInspectTypeVal.Text = "Secure Delivery Package (ZIP)";
+                                lblInspectModeVal.Text = "Password";
+                                lblInspectVersionVal.Text = "Unknown";
+                                sb.AppendLine("Container: Secure Delivery Package (ZIP)");
+                                sb.AppendLine("Delivery bundle: detected");
+                                sb.AppendLine("Inspect detail: failed to extract SecureDeliveryPackage.zip from archive.");
+                                rtbInspect.Text = sb.ToString();
+                                InspectStatus("Detected ZIP delivery bundle, but failed to read the packaged delivery file.", error: true);
+                                return;
+                            }
+                            tempZip = extractedBundle;
+                        }
+                        else if (!TryExtractZipEntryToTempFile(path, "Click_Here_to_Decrypt.exe", ".exe", out var extractedExe))
+                        {
+                            lblInspectTypeVal.Text = "Secure Delivery Package (ZIP)";
                             lblInspectModeVal.Text = "Password";
                             lblInspectVersionVal.Text = "Unknown";
-                            sb.AppendLine("Container: Self-Extracting Package (ZIP)");
+                            sb.AppendLine("Container: Secure Delivery Package (ZIP)");
                             sb.AppendLine("Embedded launcher: detected");
                             sb.AppendLine("Inspect detail: failed to extract Click_Here_to_Decrypt.exe from archive.");
                             rtbInspect.Text = sb.ToString();
                             InspectStatus("Detected wrapped SFX ZIP, but failed to read embedded launcher.", error: true);
                             return;
                         }
-                        tempExe = extractedExe;
-
-                        if (!TryGetEmbeddedSfxInfoForInspect(tempExe, out var wrappedPkgOff, out var wrappedPkgLen, out _, out _))
+                        else
                         {
-                            lblInspectTypeVal.Text = "Self-Extracting Package (ZIP)";
-                            lblInspectModeVal.Text = "Password";
-                            lblInspectVersionVal.Text = "Unknown";
-                            sb.AppendLine("Container: Self-Extracting Package (ZIP)");
-                            sb.AppendLine("Embedded launcher: present");
-                            sb.AppendLine("Inspect detail: launcher does not contain an embedded ObsidianQ package.");
-                            rtbInspect.Text = sb.ToString();
-                            InspectStatus("Wrapped SFX ZIP found, but the embedded launcher was not a valid package.", error: true);
-                            return;
+                            tempExe = extractedExe;
+
+                            if (!TryGetEmbeddedSfxInfoForInspect(tempExe, out var wrappedPkgOff, out var wrappedPkgLen, out _, out _))
+                            {
+                                lblInspectTypeVal.Text = "Secure Delivery Package (ZIP)";
+                                lblInspectModeVal.Text = "Password";
+                                lblInspectVersionVal.Text = "Unknown";
+                                sb.AppendLine("Container: Secure Delivery Package (ZIP)");
+                                sb.AppendLine("Embedded launcher: present");
+                                sb.AppendLine("Inspect detail: launcher does not contain an embedded ObsidianQ package.");
+                                rtbInspect.Text = sb.ToString();
+                                InspectStatus("Wrapped SFX ZIP found, but the embedded launcher was not a valid package.", error: true);
+                                return;
+                            }
+
+                            if (!TryExtractEmbeddedPackageZip(tempExe, wrappedPkgOff, wrappedPkgLen, out var extractedZip))
+                            {
+                                lblInspectTypeVal.Text = "Secure Delivery Package (ZIP)";
+                                lblInspectModeVal.Text = "Password";
+                                lblInspectVersionVal.Text = "Unknown";
+                                sb.AppendLine("Container: Secure Delivery Package (ZIP)");
+                                sb.AppendLine("Embedded package: detected");
+                                sb.AppendLine("Inspect detail: failed to extract embedded package segment from launcher.");
+                                rtbInspect.Text = sb.ToString();
+                                InspectStatus("Wrapped SFX ZIP found, but failed to extract the embedded package.", error: true);
+                                return;
+                            }
+                            tempZip = extractedZip;
                         }
 
-                        if (!TryExtractEmbeddedPackageZip(tempExe, wrappedPkgOff, wrappedPkgLen, out var extractedZip))
-                        {
-                            lblInspectTypeVal.Text = "Self-Extracting Package (ZIP)";
-                            lblInspectModeVal.Text = "Password";
-                            lblInspectVersionVal.Text = "Unknown";
-                            sb.AppendLine("Container: Self-Extracting Package (ZIP)");
-                            sb.AppendLine("Embedded package: detected");
-                            sb.AppendLine("Inspect detail: failed to extract embedded package segment from launcher.");
-                            rtbInspect.Text = sb.ToString();
-                            InspectStatus("Wrapped SFX ZIP found, but failed to extract the embedded package.", error: true);
-                            return;
-                        }
-                        tempZip = extractedZip;
-
-                        lblInspectTypeVal.Text = "Self-Extracting Package (ZIP)";
+                        lblInspectTypeVal.Text = "Secure Delivery Package (ZIP)";
                         lblInspectModeVal.Text = "Password";
 
                         var (dCode, dStdout, dStderr) = await RunInspectCliAsync($"delivery inspect --json \"{tempZip}\"");
@@ -6164,7 +6187,7 @@ class MainForm : Form
                         var senderMatch = await ResolveSignedSenderAsync(senderFingerprint, senderName, senderEmail, senderDevice);
 
                         lblInspectVersionVal.Text = schema;
-                        sb.AppendLine("Container: Self-Extracting Package (ZIP)");
+                        sb.AppendLine("Container: Secure Delivery Package (ZIP)");
                         sb.AppendLine($"Schema version: {schema}");
                         sb.AppendLine($"Package ID: {packageUuid}");
                         sb.AppendLine($"Created: {createdUtc}");
@@ -6200,7 +6223,7 @@ class MainForm : Form
                         sb.AppendLine($"{(verifyOk ? "✓" : "X")} {(verifyOk ? "No tampering detected" : "Tampering or manifest verification failed")}");
                         if (verifyOk)
                         {
-                            InspectStatus("Self-Extracting ZIP package verified.");
+                            InspectStatus("Secure Delivery ZIP package verified.");
                         }
                         else
                         {
@@ -6214,7 +6237,7 @@ class MainForm : Form
                             }
                             catch { /* keep stderr fallback */ }
                             sb.AppendLine($"Integrity: FAILED ({verifyErr})");
-                            InspectStatus("Self-Extracting ZIP package verification failed.", error: true);
+                            InspectStatus("Secure Delivery ZIP package verification failed.", error: true);
                         }
 
                         rtbInspect.Text = sb.ToString();
@@ -6394,15 +6417,16 @@ class MainForm : Form
         var txtDelOutputDir = MakeTextBox();
         txtDelOutputDir.Text = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
         var txtDelPackagePath = MakeTextBox();
-        txtDelPackagePath.PlaceholderText = "Self-Extracting package path (.zip/.exe)";
+        txtDelPackagePath.PlaceholderText = "Secure Delivery output path (.zip/.exe)";
         var txtDelInstructions = MakeTextBox();
         txtDelInstructions.Multiline = true;
         txtDelInstructions.ScrollBars = ScrollBars.Vertical;
         txtDelInstructions.Text =
-            "1) If you received a ZIP, extract all files first." + "\r\n" +
-            "2) Run Click_Here_to_Decrypt.exe (or open the Single EXE package)." + "\r\n" +
+            "1) If you received a ZIP bundle, extract all files into the same folder." + "\r\n" +
+            "2) Run Click_Here_to_Decrypt.exe from that folder." + "\r\n" +
             "3) Enter your password when prompted." + "\r\n" +
-            "4) Choose where to extract your files.";
+            "4) Choose where to extract your files." + "\r\n" +
+            "5) Use Single EXE mode only when the sender explicitly chose that format.";
         var txtDelExtractOut = MakeTextBox();
         txtDelExtractOut.Text = string.Empty;
         var chkDelCompress = new CheckBox { Text = "Compress files before packaging", AutoSize = true, ForeColor = Theme.TextMain, BackColor = Theme.Bg, Font = Theme.SafeMono(8.5f) };
@@ -6423,8 +6447,13 @@ class MainForm : Form
         lblDelMetadataHint.AutoSize = false;
         lblDelMetadataHint.Dock = DockStyle.Fill;
         lblDelMetadataHint.TextAlign = ContentAlignment.TopLeft;
+        var lblDelModeHint = MakeLabel("Prefer .obsq from FILE for ObsidianQ users. In this tab, ZIP bundle is the safest recipient-friendly option.", 8.0f);
+        lblDelModeHint.ForeColor = Theme.TextDim;
+        lblDelModeHint.AutoSize = false;
+        lblDelModeHint.Dock = DockStyle.Fill;
+        lblDelModeHint.TextAlign = ContentAlignment.TopLeft;
         var rbDelZip = new RadioButton { Text = "ZIP Archive (Recommended)", AutoSize = true, Checked = true, ForeColor = Theme.TextMain, BackColor = Theme.Bg, Font = Theme.SafeMono(8.5f) };
-        var rbDelExe = new RadioButton { Text = "Single EXE File", AutoSize = true, ForeColor = Theme.TextMain, BackColor = Theme.Bg, Font = Theme.SafeMono(8.5f) };
+        var rbDelExe = new RadioButton { Text = "Single EXE File (Advanced)", AutoSize = true, ForeColor = Theme.TextMain, BackColor = Theme.Bg, Font = Theme.SafeMono(8.5f) };
         var lstDelSources = new ListBox
         {
             Dock = DockStyle.Fill,
@@ -6664,6 +6693,10 @@ class MainForm : Form
             lblDelOutputPreview.Text = BuildDeliveryPackagePath();
             txtDelPackagePath.Text = BuildDeliveryPackagePath();
             txtDelInstructions.Enabled = chkDelIncludeInstructions.Checked;
+            lblDelModeHint.ForeColor = rbDelExe.Checked ? Theme.Error : Theme.TextDim;
+            lblDelModeHint.Text = rbDelExe.Checked
+                ? "Advanced mode: executable attachments may be blocked, quarantined, or treated as suspicious.\r\nPrefer ZIP bundle when emailing customers."
+                : "Preferred order: use .obsq from FILE for ObsidianQ users.\r\nIn this tab, ZIP bundle is the safest recipient-friendly option.";
             lblDelMetadataHint.Text = chkDelSignMetadata.Checked
                 ? "Signed packages expose fingerprint-based verification.\r\nSender details are optional."
                 : "Unsigned packages omit sender proof.\r\nIdentity metadata is not included.";
@@ -6692,7 +6725,7 @@ class MainForm : Form
             catch { return false; }
         }
 
-        bool TryBuildZipWithSingleExeEntrypoint(string packagePath, bool includeStartHere, string? customInstructions, out string error)
+        bool TryBuildZipDeliveryBundle(string packagePath, bool includeStartHere, string? customInstructions, out string error)
         {
             error = string.Empty;
             try
@@ -6702,27 +6735,37 @@ class MainForm : Form
                     error = "Package output not found.";
                     return false;
                 }
-                string tempRoot = Path.Combine(Path.GetTempPath(), $"obsq_delivery_zip_wrap_{Guid.NewGuid():N}");
-                Directory.CreateDirectory(tempRoot);
-                string tempExePath = Path.Combine(tempRoot, "Click_Here_to_Decrypt.exe");
-                string tempZipPath = Path.Combine(tempRoot, Path.GetFileName(packagePath));
-
-                if (!TryBuildSingleExeFromPackage(packagePath, tempExePath, includeStartHere, out var exeErr))
+                if (!File.Exists(DeliveryViewerPath))
                 {
-                    error = exeErr;
+                    error = $"ZIP delivery viewer not found at: {DeliveryViewerPath}";
+                    return false;
+                }
+                if (!File.Exists(ExePath))
+                {
+                    error = "obsidianq.exe not found; cannot build ZIP delivery bundle.";
                     return false;
                 }
 
+                string tempRoot = Path.Combine(Path.GetTempPath(), $"obsq_delivery_zip_wrap_{Guid.NewGuid():N}");
+                Directory.CreateDirectory(tempRoot);
+                string tempViewerPath = Path.Combine(tempRoot, "Click_Here_to_Decrypt.exe");
+                string tempZipPath = Path.Combine(tempRoot, Path.GetFileName(packagePath));
+                File.Copy(DeliveryViewerPath, tempViewerPath, overwrite: true);
+
                 const string startHereText =
-                    "ObsidianQ Self-Extracting Package\r\n\r\n" +
-                    "1) Extract all files from this ZIP.\r\n" +
-                    "2) Run Click_Here_to_Decrypt.exe.\r\n" +
-                    "3) Enter your password when prompted.\r\n" +
-                    "4) Choose where to extract your files.\r\n";
+                    "ObsidianQ Secure Delivery Bundle\r\n\r\n" +
+                    "1) Extract all files from this ZIP into the same folder.\r\n" +
+                    "2) Keep Click_Here_to_Decrypt.exe, SecureDeliveryPackage.zip, and obsidianq.exe together.\r\n" +
+                    "3) Run Click_Here_to_Decrypt.exe.\r\n" +
+                    "4) Enter your password when prompted.\r\n" +
+                    "5) Choose where to extract your files.\r\n\r\n" +
+                    "Prefer ZIP bundle delivery for email and customer-facing sharing. Standalone EXE attachments are often blocked.\r\n";
 
                 using (var zip = ZipFile.Open(tempZipPath, ZipArchiveMode.Create))
                 {
-                    zip.CreateEntryFromFile(tempExePath, "Click_Here_to_Decrypt.exe", CompressionLevel.Optimal);
+                    zip.CreateEntryFromFile(tempViewerPath, "Click_Here_to_Decrypt.exe", CompressionLevel.Optimal);
+                    zip.CreateEntryFromFile(ExePath, "obsidianq.exe", CompressionLevel.Optimal);
+                    zip.CreateEntryFromFile(packagePath, "SecureDeliveryPackage.zip", CompressionLevel.Optimal);
                     if (!string.IsNullOrWhiteSpace(customInstructions))
                     {
                         var customEntry = zip.CreateEntry("INSTRUCTIONS.txt", CompressionLevel.Optimal);
@@ -6813,7 +6856,7 @@ class MainForm : Form
             if (string.IsNullOrWhiteSpace(path)) return;
             if (!File.Exists(path) && !Directory.Exists(path)) return;
             if (_tabs is null) return;
-            _tabs.SelectedIndex = 4; // Self-Extracting Package
+            _tabs.SelectedIndex = 4; // Secure Delivery
             TryAutoSetDeliveryNameFromSource(path);
             string? outputDir = GetDeliveryOutputDirFromSource(path);
             if (!string.IsNullOrWhiteSpace(outputDir))
@@ -6890,7 +6933,7 @@ class MainForm : Form
         {
             using var dlg = new Form
             {
-                Text = "Self-Extracting Package Details",
+                Text = "Secure Delivery Details",
                 StartPosition = FormStartPosition.CenterParent,
                 FormBorderStyle = FormBorderStyle.Sizable,
                 MinimizeBox = false,
@@ -6974,8 +7017,8 @@ class MainForm : Form
             {
                 DelLog($"[CMD] obsidianq {argsSb}", Theme.TextDim);
                 var (code, stdout, stderr) = await RunWithBusyDialogAsync(
-                    "Self-Extracting Package",
-                    "Creating self-extracting package...",
+                    "Secure Delivery",
+                    "Creating secure delivery package...",
                     () => RunDeliveryCliAsync(argsSb.ToString(), [txtDelPassword.Text]));
                 if (!string.IsNullOrWhiteSpace(stderr)) DelLog(stderr.TrimEnd(), Theme.Error);
                 if (!string.IsNullOrWhiteSpace(stdout)) DelLog(stdout.TrimEnd(), Theme.AccentDim);
@@ -6990,15 +7033,15 @@ class MainForm : Form
                     if (rbDelZip.Checked)
                     {
                         string? customZipInstructions = chkDelIncludeInstructions.Checked ? (txtDelInstructions.Text ?? string.Empty) : null;
-                        if (TryBuildZipWithSingleExeEntrypoint(finalZipPath, includeStartHere, customZipInstructions, out var embedErr))
+                        if (TryBuildZipDeliveryBundle(finalZipPath, includeStartHere, customZipInstructions, out var embedErr))
                         {
-                            DelLog("[OK] Built ZIP package with single EXE entrypoint.", Theme.AccentDim);
-                            DelStatus(string.IsNullOrWhiteSpace(msg) ? "ZIP package created with single EXE entrypoint." : $"{msg} ZIP package includes one EXE entrypoint.");
+                            DelLog("[OK] Built ZIP delivery bundle with viewer, package, and instructions.", Theme.AccentDim);
+                            DelStatus(string.IsNullOrWhiteSpace(msg) ? "ZIP delivery bundle created." : $"{msg} ZIP delivery bundle created.");
                         }
                         else
                         {
-                            DelLog($"[ERR] Failed to build ZIP with EXE entrypoint: {embedErr}", Theme.Error);
-                            DelStatus(string.IsNullOrWhiteSpace(msg) ? "Package created (ZIP entrypoint wrap failed)." : $"{msg} ZIP entrypoint wrap failed.", error: true);
+                            DelLog($"[ERR] Failed to build ZIP delivery bundle: {embedErr}", Theme.Error);
+                            DelStatus(string.IsNullOrWhiteSpace(msg) ? "Package created (ZIP bundle assembly failed)." : $"{msg} ZIP bundle assembly failed.", error: true);
                         }
                     }
                     else
@@ -7014,13 +7057,13 @@ class MainForm : Form
                         {
                             DelLog($"[ERR] Failed to build single EXE package: {exeErr}", Theme.Error);
                             string? customZipInstructions = chkDelIncludeInstructions.Checked ? (txtDelInstructions.Text ?? string.Empty) : null;
-                            if (TryBuildZipWithSingleExeEntrypoint(finalZipPath, includeStartHere, customZipInstructions, out var zipFallbackErr))
+                            if (TryBuildZipDeliveryBundle(finalZipPath, includeStartHere, customZipInstructions, out var zipFallbackErr))
                             {
                                 txtDelPackagePath.Text = finalZipPath;
-                                DelLog("[OK] Fallback: created ZIP package with single EXE entrypoint.", Theme.AccentDim);
+                                DelLog("[OK] Fallback: created ZIP delivery bundle.", Theme.AccentDim);
                                 DelStatus(string.IsNullOrWhiteSpace(msg)
-                                    ? "EXE conversion failed; fallback ZIP package created."
-                                    : $"{msg} EXE conversion failed; fallback ZIP package created.",
+                                    ? "EXE conversion failed; fallback ZIP bundle created."
+                                    : $"{msg} EXE conversion failed; fallback ZIP bundle created.",
                                     error: true);
                             }
                             else
@@ -7108,10 +7151,11 @@ class MainForm : Form
         delOutputHost.Controls.Add(MakeLabel("OUTPUT FOLDER", 8.5f, true), 0, 0);
         delOutputHost.Controls.Add(delOutRow, 1, 0);
 
-        var delOptionsCompact = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 10, BackColor = Theme.Bg, Margin = new Padding(0), Padding = new Padding(0) };
+        var delOptionsCompact = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 11, BackColor = Theme.Bg, Margin = new Padding(0), Padding = new Padding(0) };
         delOptionsCompact.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
         delOptionsCompact.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
         delOptionsCompact.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
+        delOptionsCompact.RowStyles.Add(new RowStyle(SizeType.Absolute, 54));
         delOptionsCompact.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
         delOptionsCompact.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
         delOptionsCompact.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
@@ -7128,13 +7172,14 @@ class MainForm : Form
         delOptionsCompact.Controls.Add(delNameRow, 0, 0);
         delOptionsCompact.Controls.Add(rbDelZip, 0, 1);
         delOptionsCompact.Controls.Add(rbDelExe, 0, 2);
-        delOptionsCompact.Controls.Add(chkDelCompress, 0, 3);
-        delOptionsCompact.Controls.Add(chkDelIncludeInstructions, 0, 4);
-        delOptionsCompact.Controls.Add(chkDelSignMetadata, 0, 5);
-        delOptionsCompact.Controls.Add(chkDelIncludeSenderDetails, 0, 6);
-        delOptionsCompact.Controls.Add(chkDelIncludeFileList, 0, 7);
-        delOptionsCompact.Controls.Add(chkDelIncludeVersionMetadata, 0, 8);
-        delOptionsCompact.Controls.Add(lblDelMetadataHint, 0, 9);
+        delOptionsCompact.Controls.Add(lblDelModeHint, 0, 3);
+        delOptionsCompact.Controls.Add(chkDelCompress, 0, 4);
+        delOptionsCompact.Controls.Add(chkDelIncludeInstructions, 0, 5);
+        delOptionsCompact.Controls.Add(chkDelSignMetadata, 0, 6);
+        delOptionsCompact.Controls.Add(chkDelIncludeSenderDetails, 0, 7);
+        delOptionsCompact.Controls.Add(chkDelIncludeFileList, 0, 8);
+        delOptionsCompact.Controls.Add(chkDelIncludeVersionMetadata, 0, 9);
+        delOptionsCompact.Controls.Add(lblDelMetadataHint, 0, 10);
         var delFinalOutputHost = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = Theme.Bg, Margin = new Padding(0) };
         delFinalOutputHost.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
         delFinalOutputHost.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -7178,8 +7223,8 @@ class MainForm : Form
         outerDelivery.RowStyles.Add(new RowStyle(SizeType.Absolute, 0));
         outerDelivery.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
         outerDelivery.Controls.Add(MakeTabHeader(
-            "SELF-EXTRACTING PACKAGE",
-            "Create portable password-protected packages for recipients without ObsidianQ."), 0, 0);
+            "SECURE DELIVERY",
+            "Prefer .obsq for ObsidianQ users, use ZIP bundles for customer delivery, and reserve Single EXE for compatibility-only cases."), 0, 0);
         outerDelivery.Controls.Add(delAccess, 0, 1);
         var delSummaryRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = Theme.Bg, Margin = new Padding(0) };
         delSummaryRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
@@ -7223,7 +7268,7 @@ class MainForm : Form
         var tabText  = new TabPage { Text = "TEXT",  BackColor = Theme.Bg, ForeColor = Theme.TextMain, Padding = new Padding(0), UseVisualStyleBackColor = false };
         var tabVault = new TabPage { Text = "VAULT", BackColor = Theme.Bg, ForeColor = Theme.TextMain, Padding = new Padding(0), UseVisualStyleBackColor = false };
         var tabInspect = new TabPage { Text = "INSPECT", BackColor = Theme.Bg, ForeColor = Theme.TextMain, Padding = new Padding(0), UseVisualStyleBackColor = false };
-        var tabDelivery = new TabPage { Text = "SELF-EXTRACTING PACKAGE", BackColor = Theme.Bg, ForeColor = Theme.TextMain, Padding = new Padding(0), UseVisualStyleBackColor = false };
+        var tabDelivery = new TabPage { Text = "SECURE DELIVERY", BackColor = Theme.Bg, ForeColor = Theme.TextMain, Padding = new Padding(0), UseVisualStyleBackColor = false };
         var tabExchange = new TabPage { Text = "FILE SEND / RECEIVE", BackColor = Theme.Bg, ForeColor = Theme.TextMain, Padding = new Padding(0), UseVisualStyleBackColor = false };
         var tabKeyExchange2 = new TabPage { Text = "SECURE CONTACTS", BackColor = Theme.Bg, ForeColor = Theme.TextMain, Padding = new Padding(0), UseVisualStyleBackColor = false };
         var tabSettings = new TabPage { Text = "SETTINGS", BackColor = Theme.Bg, ForeColor = Theme.TextMain, Padding = new Padding(0), UseVisualStyleBackColor = false };
@@ -7369,7 +7414,7 @@ class MainForm : Form
 
         if (createPackageOnStart && !string.IsNullOrWhiteSpace(createPackageTarget))
         {
-            _tabs.SelectedIndex = 4; // Self-Extracting Package
+            _tabs.SelectedIndex = 4; // Secure Delivery
             RunWhenHandleReady(() =>
             {
                 try
@@ -7378,7 +7423,7 @@ class MainForm : Form
                 }
                 catch (Exception ex)
                 {
-                    MessageBox.Show(this, $"Unable to load source for package creation:\n{ex.Message}", "Self-Extracting Package", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    MessageBox.Show(this, $"Unable to load source for package creation:\n{ex.Message}", "Secure Delivery", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
                 return Task.CompletedTask;
             });
@@ -11696,14 +11741,6 @@ class MainForm : Form
 
     private static string ResolveExtractorStubPath()
     {
-        string? native = TryExtractEmbeddedNativeBootstrapper();
-        if (!string.IsNullOrWhiteSpace(native) && File.Exists(native))
-            return native;
-
-        string? embedded = TryExtractEmbeddedExtractorStub();
-        if (!string.IsNullOrWhiteSpace(embedded) && File.Exists(embedded))
-            return embedded;
-
         string self = AppContext.BaseDirectory;
         string nativeCandidate = Path.Combine(self, "ObsidianQ.Bootstrapper.exe");
         if (File.Exists(nativeCandidate)) return nativeCandidate;
@@ -11723,6 +11760,38 @@ class MainForm : Form
         ];
         foreach (var c in candidates)
             if (File.Exists(c)) return c;
+
+        string? native = TryExtractEmbeddedNativeBootstrapper();
+        if (!string.IsNullOrWhiteSpace(native) && File.Exists(native))
+            return native;
+
+        string? embedded = TryExtractEmbeddedExtractorStub();
+        if (!string.IsNullOrWhiteSpace(embedded) && File.Exists(embedded))
+            return embedded;
+
+        return candidate;
+    }
+
+    private static string ResolveDeliveryViewerPath()
+    {
+        string self = AppContext.BaseDirectory;
+        string candidate = Path.Combine(self, "ObsidianQ.Extractor.exe");
+        if (File.Exists(candidate)) return candidate;
+
+        string repoRoot = Path.GetFullPath(Path.Combine(self, "..", ".."));
+        string[] candidates =
+        [
+            Path.Combine(repoRoot, "tools", "windows-extractor", "bin", "Debug", "net8.0-windows", "win-x64", "ObsidianQ.Extractor.exe"),
+            Path.Combine(repoRoot, "tools", "windows-extractor", "bin", "Release", "net8.0-windows", "win-x64", "ObsidianQ.Extractor.exe"),
+            Path.Combine(repoRoot, "tools", "windows-extractor", "bin", "Debug", "net8.0-windows", "ObsidianQ.Extractor.exe"),
+            Path.Combine(repoRoot, "tools", "windows-extractor", "bin", "Release", "net8.0-windows", "ObsidianQ.Extractor.exe"),
+        ];
+        foreach (var c in candidates)
+            if (File.Exists(c)) return c;
+
+        string? embedded = TryExtractEmbeddedExtractorStub();
+        if (!string.IsNullOrWhiteSpace(embedded) && File.Exists(embedded))
+            return embedded;
 
         return candidate;
     }
