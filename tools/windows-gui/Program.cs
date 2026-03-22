@@ -4052,6 +4052,25 @@ class MainForm : Form
             return new string(value.Where(char.IsLetterOrDigit).ToArray()).ToUpperInvariant();
         }
 
+        const string LegacyIdentityAlgorithm = "ML-KEM-768";
+        const string HybridIdentityAlgorithm = "Kyber768-R3+X25519";
+        static bool Kx2IsHybridKeyPayload(byte[] raw) =>
+            raw.Length == 8 + 1184 + 32 &&
+            Encoding.ASCII.GetString(raw, 0, 8).Equals("OBSQHPK1", StringComparison.Ordinal);
+
+        static string Kx2InferIdentityAlgorithm(string keyBase64)
+        {
+            try
+            {
+                byte[] raw = Convert.FromBase64String(keyBase64);
+                return Kx2IsHybridKeyPayload(raw) ? HybridIdentityAlgorithm : LegacyIdentityAlgorithm;
+            }
+            catch
+            {
+                return LegacyIdentityAlgorithm;
+            }
+        }
+
         static string Kx2BuildPublicIdentityDocument(
             string keyBase64,
             string fingerprint,
@@ -4067,7 +4086,7 @@ class MainForm : Form
             if (!string.IsNullOrWhiteSpace(email)) sb.AppendLine($"email:{email.Trim()}");
             if (!string.IsNullOrWhiteSpace(device)) sb.AppendLine($"device:{device.Trim()}");
             if (!string.IsNullOrWhiteSpace(created)) sb.AppendLine($"created:{created.Trim()}");
-            sb.AppendLine("algorithm:ML-KEM-768");
+            sb.AppendLine($"algorithm:{Kx2InferIdentityAlgorithm(keyBase64)}");
             sb.AppendLine($"fingerprint:{fingerprint.Trim()}");
             sb.AppendLine();
             sb.AppendLine("key:");
@@ -4100,19 +4119,37 @@ class MainForm : Form
             if (s < 0 || e <= s) { error = "Identity block markers are invalid."; return false; }
             string body = text[(s + begin.Length)..e];
             bool inKey = false;
+            bool inClassicalKey = false;
             var keyLines = new List<string>();
+            var classicalKeyLines = new List<string>();
             foreach (string raw in body.Split(['\r', '\n'], StringSplitOptions.None))
             {
                 string line = raw.Trim();
                 if (string.IsNullOrWhiteSpace(line)) continue;
                 if (inKey)
                 {
+                    if (line.Equals("classical_key:", StringComparison.OrdinalIgnoreCase))
+                    {
+                        inKey = false;
+                        inClassicalKey = true;
+                        continue;
+                    }
                     keyLines.Add(line);
+                    continue;
+                }
+                if (inClassicalKey)
+                {
+                    classicalKeyLines.Add(line);
                     continue;
                 }
                 if (line.Equals("key:", StringComparison.OrdinalIgnoreCase))
                 {
                     inKey = true;
+                    continue;
+                }
+                if (line.Equals("classical_key:", StringComparison.OrdinalIgnoreCase))
+                {
+                    inClassicalKey = true;
                     continue;
                 }
                 int idx = line.IndexOf(':');
@@ -4131,11 +4168,29 @@ class MainForm : Form
             }
 
             if (keyLines.Count == 0) { error = "Identity block is missing key data."; return false; }
-            keyNormalized = NormalizeKeyText(string.Concat(keyLines));
-            if (string.IsNullOrWhiteSpace(keyNormalized)) { error = "Identity key data is empty."; return false; }
+            string baseKeyNormalized = NormalizeKeyText(string.Concat(keyLines));
+            if (string.IsNullOrWhiteSpace(baseKeyNormalized)) { error = "Identity key data is empty."; return false; }
             try
             {
-                _ = Convert.FromBase64String(keyNormalized);
+                byte[] keyRaw = Convert.FromBase64String(baseKeyNormalized);
+                if (string.Equals(algorithm, HybridIdentityAlgorithm, StringComparison.OrdinalIgnoreCase) && classicalKeyLines.Count > 0)
+                {
+                    byte[] classicalRaw = Convert.FromBase64String(NormalizeKeyText(string.Concat(classicalKeyLines)));
+                    if (classicalRaw.Length != 32)
+                    {
+                        error = "Identity classical key data has the wrong length.";
+                        return false;
+                    }
+                    byte[] combined = new byte[8 + keyRaw.Length + classicalRaw.Length];
+                    Encoding.ASCII.GetBytes("OBSQHPK1").CopyTo(combined, 0);
+                    Buffer.BlockCopy(keyRaw, 0, combined, 8, keyRaw.Length);
+                    Buffer.BlockCopy(classicalRaw, 0, combined, 8 + keyRaw.Length, classicalRaw.Length);
+                    keyNormalized = Convert.ToBase64String(combined);
+                }
+                else
+                {
+                    keyNormalized = baseKeyNormalized;
+                }
             }
             catch
             {
@@ -4259,7 +4314,7 @@ class MainForm : Form
                     var item = new ListViewItem(parts[0].Trim());
                     item.SubItems.Add(parts[1].Trim());
                     item.SubItems.Add(parts[3].Trim());
-                    item.SubItems.Add(string.IsNullOrWhiteSpace(parts[2]) ? "PQC" : parts[2].Trim());
+                    item.SubItems.Add(string.IsNullOrWhiteSpace(parts[2]) ? "Legacy" : parts[2].Trim());
                     item.SubItems.Add(parts.Length > 5 ? parts[5].Trim() : string.Empty); // email
                     item.SubItems.Add(parts.Length > 6 ? parts[6].Trim() : string.Empty); // device
                     item.SubItems.Add(parts.Length > 7 ? parts[7].Trim() : string.Empty); // identity created
@@ -4386,7 +4441,7 @@ class MainForm : Form
             string email = "",
             string device = "",
             string identityCreated = "",
-            string identityAlgorithm = "ML-KEM-768")
+            string identityAlgorithm = HybridIdentityAlgorithm)
         {
             ListViewItem? existing = null;
             foreach (ListViewItem row in lvKx2Recipients.Items)
@@ -4403,7 +4458,7 @@ class MainForm : Form
                 var item = new ListViewItem(contactName);
                 item.SubItems.Add(fingerprint);
                 item.SubItems.Add(DateTime.Now.ToString("MM-dd-yyyy"));
-                item.SubItems.Add("PQC");
+                item.SubItems.Add(identityAlgorithm.Equals(HybridIdentityAlgorithm, StringComparison.OrdinalIgnoreCase) ? "Hybrid" : "Legacy");
                 item.SubItems.Add(email.Trim());
                 item.SubItems.Add(device.Trim());
                 item.SubItems.Add(identityCreated.Trim());
@@ -4415,7 +4470,7 @@ class MainForm : Form
             {
                 existing.SubItems[0].Text = contactName;
                 existing.SubItems[2].Text = DateTime.Now.ToString("MM-dd-yyyy");
-                existing.SubItems[3].Text = "PQC";
+                existing.SubItems[3].Text = identityAlgorithm.Equals(HybridIdentityAlgorithm, StringComparison.OrdinalIgnoreCase) ? "Hybrid" : "Legacy";
                 existing.SubItems[4].Text = email.Trim();
                 existing.SubItems[5].Text = device.Trim();
                 existing.SubItems[6].Text = identityCreated.Trim();
@@ -4469,7 +4524,7 @@ class MainForm : Form
             string detectedEmail = string.Empty;
             string detectedDevice = string.Empty;
             string detectedCreated = string.Empty;
-            string detectedAlgorithm = "ML-KEM-768";
+            string detectedAlgorithm = HybridIdentityAlgorithm;
             bool validating = false;
 
             var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 8, Padding = new Padding(12), BackColor = Theme.Bg };
@@ -4537,7 +4592,8 @@ class MainForm : Form
 
                 if (fromIdentity)
                 {
-                    if (!string.Equals(parsedAlgorithm, "ML-KEM-768", StringComparison.OrdinalIgnoreCase))
+                    if (!string.Equals(parsedAlgorithm, HybridIdentityAlgorithm, StringComparison.OrdinalIgnoreCase) &&
+                        !string.Equals(parsedAlgorithm, LegacyIdentityAlgorithm, StringComparison.OrdinalIgnoreCase))
                     {
                         lblInfo.Text = autoTriggered ? "Identity detected but algorithm is unsupported." : $"Unsupported identity algorithm: {parsedAlgorithm}";
                         lblInfo.ForeColor = Theme.Error;
@@ -4555,7 +4611,7 @@ class MainForm : Form
                     if (!string.IsNullOrWhiteSpace(localEmail)) txtEmail.Text = localEmail;
                     if (!string.IsNullOrWhiteSpace(localDevice)) txtDevice.Text = localDevice;
                     detectedCreated = parsedCreated?.Trim() ?? string.Empty;
-                    detectedAlgorithm = string.IsNullOrWhiteSpace(parsedAlgorithm) ? "ML-KEM-768" : parsedAlgorithm.Trim();
+                    detectedAlgorithm = string.IsNullOrWhiteSpace(parsedAlgorithm) ? HybridIdentityAlgorithm : parsedAlgorithm.Trim();
 
                     string? computedFp = await ComputeFingerprintAsync(raw);
                     if (string.IsNullOrWhiteSpace(computedFp))
@@ -5425,7 +5481,7 @@ class MainForm : Form
 
         var cardSecurity = MakeAboutCard("Security Architecture");
         AddAboutParagraph(cardSecurity, "ObsidianQ is built around modern, well-established cryptographic components chosen for strong security and practical performance.");
-        AddAboutBullet(cardSecurity, "Post-Quantum Key Exchange: ML-KEM-768 (Kyber) for quantum-resistant public-key protection");
+        AddAboutBullet(cardSecurity, "Recipient exchange: hybrid Kyber Round 3 plus X25519 for new contact-based protection, with legacy recipient packages still readable");
         AddAboutBullet(cardSecurity, "Authenticated Encryption: XChaCha20-Poly1305 for confidentiality and integrity");
         AddAboutBullet(cardSecurity, "Password Hardening: Argon2id for strong password-based protection");
         AddAboutBullet(cardSecurity, "Hashing and Fingerprints: BLAKE3 for fast, modern hashing and identity fingerprints");

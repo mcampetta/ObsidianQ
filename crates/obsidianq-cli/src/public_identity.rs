@@ -1,11 +1,13 @@
 use anyhow::{bail, Context, Result};
 use base64ct::{Base64, Encoding};
+use obsidianq_core::crypto::kem::EK_BYTES;
 
 pub const ID_BEGIN: &str = "-----BEGIN OBSIDIANQ PUBLIC IDENTITY-----";
 pub const ID_END: &str = "-----END OBSIDIANQ PUBLIC IDENTITY-----";
 const PUB_HEADER: &str = "-----BEGIN OBSIDIANQ PUBLIC KEY-----";
 const PUB_FOOTER: &str = "-----END OBSIDIANQ PUBLIC KEY-----";
 pub const ID_ALGORITHM: &str = "Kyber768-R3+X25519";
+const HYBRID_PUB_MAGIC: &[u8; 8] = b"OBSQHPK1";
 
 #[derive(Debug, Clone)]
 pub struct PublicIdentity {
@@ -25,7 +27,14 @@ pub fn contains_identity_block(text: &str) -> bool {
 }
 
 pub fn compute_fingerprint_b64(key_bytes: &[u8]) -> String {
-    let hash = blake3::hash(key_bytes);
+    let fingerprint_bytes = if key_bytes.starts_with(HYBRID_PUB_MAGIC)
+        && key_bytes.len() >= HYBRID_PUB_MAGIC.len() + EK_BYTES
+    {
+        &key_bytes[HYBRID_PUB_MAGIC.len()..HYBRID_PUB_MAGIC.len() + EK_BYTES]
+    } else {
+        key_bytes
+    };
+    let hash = blake3::hash(fingerprint_bytes);
     Base64::encode_string(hash.as_bytes())
 }
 
