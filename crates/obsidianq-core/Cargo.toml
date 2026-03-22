@@ -12,6 +12,7 @@ aes-gcm.workspace          = true
 blake3.workspace           = true
 rand.workspace             = true
 rand_core.workspace        = true
+x25519-dalek.workspace     = true
 zeroize.workspace          = true
 subtle.workspace           = true
 rayon.workspace            = true

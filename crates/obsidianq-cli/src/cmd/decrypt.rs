@@ -1,13 +1,13 @@
 use std::fs;
 use std::io::{BufRead, BufReader, BufWriter, Read};
 use std::path::PathBuf;
+use std::process;
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
     Arc,
 };
 use std::thread;
 use std::time::Duration;
-use std::process;
 
 use anyhow::{bail, Context, Result};
 use chacha20poly1305::{
@@ -19,18 +19,20 @@ use zeroize::{Zeroize, Zeroizing};
 
 use obsidianq_core::{
     crypto::{
+        hybrid::{self, HYBRID_RECIPIENT_MAGIC_V1, X25519_PUBLIC_BYTES},
         kdf::{self, Argon2Params, MasterKey},
-        kem::{self, CT_BYTES, DK_BYTES},
+        kem::{self, CT_BYTES},
     },
     engine::decrypt_with_progress,
     format::{FileHeader, Mode},
 };
 
 use super::json_output::{print_json_error, print_json_success};
-use super::read_priv;
+use super::read_priv_material;
 
 const MULTI_MAGIC_V1: &[u8; 4] = b"MRK1";
 const MULTI_MAGIC_V2: &[u8; 4] = b"MRK2";
+const MULTI_MAGIC_V3: &[u8; 4] = HYBRID_RECIPIENT_MAGIC_V1;
 const WRAP_NONCE_LEN: usize = 24;
 const WRAP_CT_LEN: usize = 48; // 32-byte key + 16-byte tag
 const WRAP_INFO: &[u8] = b"obsidianq-v1-mrk2-wrap";
@@ -294,19 +296,86 @@ fn derive_master_key(
                 .privkey
                 .as_ref()
                 .context("--privkey required for PQC mode")?;
-            let dk_raw = read_priv(pk_path).context("read private key")?;
-            if dk_raw.len() != DK_BYTES {
-                bail!(
-                    "private key is {} bytes, expected {}",
-                    dk_raw.len(),
-                    DK_BYTES
-                );
-            }
-            let dk_arr: [u8; DK_BYTES] = dk_raw.try_into().map_err(|_| {
-                anyhow::anyhow!("private key has wrong length (expected {DK_BYTES} bytes)")
-            })?;
+            let key_material = read_priv_material(pk_path).context("read private key")?;
+            let dk_arr = key_material.kyber_private;
 
-            if header.kem_data.starts_with(MULTI_MAGIC_V2) {
+            if header.kem_data.starts_with(MULTI_MAGIC_V3) {
+                if header.kem_data.len() < 4 + 2 + 32 {
+                    bail!("malformed header: hybrid multi-recipient KEM data too short");
+                }
+                let count = u16::from_le_bytes([header.kem_data[4], header.kem_data[5]]) as usize;
+                let expected =
+                    4 + 2 + count * (CT_BYTES + X25519_PUBLIC_BYTES + WRAP_NONCE_LEN + WRAP_CT_LEN) + 32;
+                if header.kem_data.len() != expected {
+                    bail!(
+                        "malformed header: expected {} bytes of hybrid KEM data, got {}",
+                        expected,
+                        header.kem_data.len()
+                    );
+                }
+                let x25519_private = key_material
+                    .x25519_private
+                    .as_ref()
+                    .context("hybrid recipient package requires a hybrid private key")?;
+                let salt_off = expected - 32;
+                let mut hkdf_salt = [0u8; 32];
+                hkdf_salt.copy_from_slice(&header.kem_data[salt_off..]);
+                let canonical = header.canonical_bytes_for_mac();
+                let mut off = 6usize;
+                for idx in 0..count {
+                    let ct_arr: [u8; CT_BYTES] = header.kem_data[off..off + CT_BYTES]
+                        .try_into()
+                        .map_err(|_| anyhow::anyhow!("KEM ciphertext slice has wrong length"))?;
+                    off += CT_BYTES;
+                    let ephemeral_public: [u8; X25519_PUBLIC_BYTES] = header.kem_data
+                        [off..off + X25519_PUBLIC_BYTES]
+                        .try_into()
+                        .map_err(|_| anyhow::anyhow!("X25519 ephemeral public slice has wrong length"))?;
+                    off += X25519_PUBLIC_BYTES;
+                    let wrap_nonce = &header.kem_data[off..off + WRAP_NONCE_LEN];
+                    off += WRAP_NONCE_LEN;
+                    let wrapped = &header.kem_data[off..off + WRAP_CT_LEN];
+                    off += WRAP_CT_LEN;
+                    let ss = match kem::decapsulate(&dk_arr, &ct_arr) {
+                        Ok(v) => v,
+                        Err(_) => continue,
+                    };
+                    let x_shared = hybrid::decapsulate_x25519(x25519_private, &ephemeral_public);
+                    let wrap_key_bytes =
+                        hybrid::derive_hybrid_wrap_key(ss.as_bytes(), &x_shared, &hkdf_salt)
+                            .context("hybrid wrap key derivation")?;
+                    let cipher = XChaCha20Poly1305::new((&wrap_key_bytes).into());
+                    let mut aad = Vec::with_capacity(
+                        WRAP_INFO.len() + 2 + 4 + 4 + CT_BYTES + X25519_PUBLIC_BYTES,
+                    );
+                    aad.extend_from_slice(WRAP_INFO);
+                    aad.extend_from_slice(&1u16.to_le_bytes());
+                    aad.extend_from_slice(MULTI_MAGIC_V3);
+                    aad.extend_from_slice(&(idx as u32).to_le_bytes());
+                    aad.extend_from_slice(&ct_arr);
+                    aad.extend_from_slice(&ephemeral_public);
+                    let plain = match cipher.decrypt(
+                        wrap_nonce.into(),
+                        Payload {
+                            msg: wrapped,
+                            aad: &aad,
+                        },
+                    ) {
+                        Ok(v) => v,
+                        Err(_) => continue,
+                    };
+                    if plain.len() != 32 {
+                        continue;
+                    }
+                    let mut candidate = [0u8; 32];
+                    candidate.copy_from_slice(&plain);
+                    let mk = MasterKey::from_bytes(candidate);
+                    if header_mac_matches(header, &canonical, &mk) {
+                        return Ok(mk);
+                    }
+                }
+                bail!("no hybrid recipient entry matched provided private key");
+            } else if header.kem_data.starts_with(MULTI_MAGIC_V2) {
                 if header.kem_data.len() < 4 + 2 + 32 {
                     bail!("malformed header: multi-recipient KEM data too short");
                 }

@@ -2,7 +2,7 @@
 //!
 //! Public API surface:
 //!   - `engine::encrypt` / `engine::decrypt`  — main file pipeline
-//!   - `crypto::kem`     — ML-KEM-768 key generation, encap, decap
+//!   - `crypto::kem`     — Kyber Round 3 key generation, encap, decap
 //!   - `crypto::kdf`     — HKDF root + chunk key derivation, Argon2id
 //!   - `format`          — binary format types (FileHeader, ChunkRecord, …)
 //!   - `error`           — ObsidianError + Result alias

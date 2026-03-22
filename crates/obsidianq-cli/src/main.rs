@@ -30,7 +30,7 @@ enum Commands {
     /// Contact import workflows
     Contacts(cmd::contacts::ContactsArgs),
 
-    /// Generate a fresh ML-KEM-768 keypair
+    /// Generate a fresh hybrid recipient keypair (Kyber Round 3 + X25519)
     #[command(hide = true)]
     Keygen(cmd::keygen::KeygenArgs),
 
@@ -43,7 +43,7 @@ enum Commands {
     /// Secure Delivery package workflows
     Delivery(cmd::delivery::DeliveryArgs),
 
-    /// Exchange encrypted packets (.obsqx) using PQC key exchange
+    /// Exchange encrypted packets (.obsqx) using recipient key exchange
     Exchange(cmd::exchange::ExchangeArgs),
 
     /// Inspect an .obsq file header without decrypting

@@ -2,9 +2,12 @@
 use clap::Args;
 use std::path::PathBuf;
 
-use obsidianq_core::crypto::kem::{self, DK_BYTES, EK_BYTES};
+use obsidianq_core::crypto::{
+    hybrid,
+    kem::{self, DK_BYTES, EK_BYTES},
+};
 
-use super::{write_priv, write_pub};
+use super::{write_priv_material, write_pub_material};
 
 #[derive(Args)]
 pub struct KeygenArgs {
@@ -23,12 +26,19 @@ pub struct KeygenArgs {
 
 pub fn run(args: KeygenArgs) -> Result<()> {
     let (ek, dk) = kem::generate_keypair();
+    let (x25519_public, x25519_private) = hybrid::generate_x25519_keypair();
 
-    write_pub(&args.pubkey, ek.0.as_ref())?;
-    write_priv(&args.privkey, dk.0.as_ref())?;
+    write_pub_material(&args.pubkey, &ek.0, Some(&x25519_public))?;
+    write_priv_material(&args.privkey, &dk.0, Some(&x25519_private))?;
 
     println!("Public key  -> {}", args.pubkey.display());
     println!("Private key -> {}", args.privkey.display());
-    println!("Key sizes: EK={} B, DK={} B", EK_BYTES, DK_BYTES);
+    println!(
+        "Key sizes: Kyber EK={} B, Kyber DK={} B, X25519 pub={} B, X25519 priv={} B",
+        EK_BYTES,
+        DK_BYTES,
+        hybrid::X25519_PUBLIC_BYTES,
+        hybrid::X25519_PRIVATE_BYTES
+    );
     Ok(())
 }
