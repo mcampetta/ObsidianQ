@@ -164,7 +164,7 @@ fn extract_package_bytes<'a>(bytes: &'a [u8]) -> Result<(&'a [u8], &'static str)
         ));
     }
     Err(js_err(
-        "unsupported file type for this PoC. Drop a Secure Delivery ZIP or self-extracting EXE package.",
+        "unsupported file type. Drop a Secure Delivery ZIP or self-extracting EXE package.",
     ))
 }
 
@@ -257,7 +257,7 @@ fn inspect_obsq_bytes(bytes: &[u8]) -> Result<InspectionView> {
         package_name: "Encrypted file".to_string(),
         recipient_mode: Some(match header.mode {
             Mode::Password => "Password".to_string(),
-            Mode::Pqc => "PQC".to_string(),
+            Mode::Pqc => "Legacy Contact".to_string(),
         }),
         package_format: match header.suite {
             SuiteId::XChaCha20Poly1305 => "XChaCha20-Poly1305".to_string(),
@@ -280,9 +280,9 @@ fn inspect_obsq_bytes(bytes: &[u8]) -> Result<InspectionView> {
             contents_match_manifest: true,
             no_tampering_detected: true,
             error: if header.flags & flags::COMPRESSED != 0 {
-                Some("Compressed .obsq files are not yet supported in the web PoC.".to_string())
+                Some("Compressed .obsq files are not yet supported in Web Decrypt.".to_string())
             } else if matches!(header.mode, Mode::Pqc) {
-                Some("PQC-mode .obsq files are not yet supported in the web PoC.".to_string())
+                Some("Legacy recipient .obsq files are not yet supported in Web Decrypt.".to_string())
             } else {
                 None
             },
@@ -477,7 +477,7 @@ fn decrypt_payload_bytes(payload: &[u8], password: &[u8]) -> Result<Vec<u8>> {
     let mut cursor = Cursor::new(payload);
     let header = FileHeader::read_from(&mut cursor).context("parse payload header")?;
     if !matches!(header.mode, Mode::Password) {
-        bail!("this PoC only supports password-mode payloads");
+        bail!("Web Decrypt currently supports password-mode payloads only");
     }
     if header.kem_data.len() != 32 {
         bail!(
@@ -519,15 +519,15 @@ fn map_decrypt_err<E: std::fmt::Display>(err: E) -> JsValue {
     {
         return JsValue::from_str("Incorrect password or unsupported encrypted file.");
     }
-    if text.contains("this PoC only supports password-mode payloads") {
+    if text.contains("Web Decrypt currently supports password-mode payloads only") {
         return JsValue::from_str(
-            "This file uses a mode that is not yet supported in the web PoC.",
+            "This file uses a mode that is not yet supported in Web Decrypt.",
         );
     }
     if text.contains("compressed payloads are not supported in wasm builds")
         || text.contains("Compressed .obsq files are not yet supported")
     {
-        return JsValue::from_str("Compressed files are not yet supported in the web PoC.");
+        return JsValue::from_str("Compressed files are not yet supported in Web Decrypt.");
     }
     JsValue::from_str(&text)
 }
