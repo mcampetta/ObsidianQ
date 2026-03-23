@@ -1622,7 +1622,7 @@ mod tests {
             package_uuid: Some("11111111-1111-4111-8111-111111111111".to_string()),
             package_format: PackageFormat::SecureDeliveryZip,
             created_utc: "2026-01-01T00:00:00Z".to_string(),
-            obsidianq_version: Some("1.3.0".to_string()),
+            obsidianq_version: Some("1.3.1".to_string()),
             package_name: "demo".to_string(),
             recipient_mode: Some(RecipientMode::Password),
             payload: PayloadManifest {
@@ -1688,7 +1688,7 @@ mod tests {
             package_uuid: Some("22222222-2222-4222-8222-222222222222".to_string()),
             package_format: PackageFormat::SecureDeliveryZip,
             created_utc: "2026-01-01T00:00:00Z".to_string(),
-            obsidianq_version: Some("1.3.0".to_string()),
+            obsidianq_version: Some("1.3.1".to_string()),
             package_name: "demo".to_string(),
             recipient_mode: Some(RecipientMode::Password),
             payload: PayloadManifest {
@@ -1740,7 +1740,7 @@ mod tests {
             package_uuid: Some("33333333-3333-4333-8333-333333333333".to_string()),
             package_format: PackageFormat::SecureDeliveryZip,
             created_utc: "2026-03-12T00:00:00Z".to_string(),
-            obsidianq_version: Some("1.3.0".to_string()),
+            obsidianq_version: Some("1.3.1".to_string()),
             package_name: "demo".to_string(),
             recipient_mode: Some(RecipientMode::Password),
             payload: PayloadManifest {
