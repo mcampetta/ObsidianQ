@@ -833,6 +833,64 @@ class NeonProgressBar : Control
     }
 }
 
+class PasswordStrengthMeter : Control
+{
+    private int _level;
+    private Color _activeColor = Theme.TextDim;
+
+    public int Level
+    {
+        get => _level;
+        set
+        {
+            int clamped = Math.Max(0, Math.Min(4, value));
+            if (_level == clamped) return;
+            _level = clamped;
+            Invalidate();
+        }
+    }
+
+    public Color ActiveColor
+    {
+        get => _activeColor;
+        set
+        {
+            if (_activeColor == value) return;
+            _activeColor = value;
+            Invalidate();
+        }
+    }
+
+    public PasswordStrengthMeter()
+    {
+        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
+        Dock = DockStyle.Fill;
+        Margin = new Padding(6, 3, 0, 3);
+        MinimumSize = new Size(52, 12);
+        MaximumSize = new Size(52, 12);
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e);
+        e.Graphics.Clear(BackColor);
+
+        const int segments = 4;
+        int gap = 3;
+        int segmentWidth = Math.Max(4, (Width - gap * (segments - 1)) / segments);
+        int x = 0;
+        for (int i = 0; i < segments; i++)
+        {
+            var rect = new Rectangle(x, 1, segmentWidth, Math.Max(6, Height - 3));
+            using var fill = new SolidBrush(i < _level ? _activeColor : Theme.Surface);
+            using var border = new Pen(i < _level ? _activeColor : Theme.Border, 1f);
+            e.Graphics.FillRectangle(fill, rect);
+            e.Graphics.DrawRectangle(border, rect);
+            x += segmentWidth + gap;
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Drop zone panel --- prominent file-drop target with click-to-browse
 // ---------------------------------------------------------------------------
@@ -2137,6 +2195,8 @@ class MainForm : Form
     private readonly ComboBox _cmbSuite;
     private readonly RichTextBox _rtbLog;
     private readonly Label _lblStatus;
+    private readonly Label _lblPasswordStrengthFile;
+    private readonly PasswordStrengthMeter _meterPasswordStrengthFile;
     private readonly NeonProgressBar _fileProgressBar;
     private readonly NeonButton _btnAdvanced;
     private bool _advancedExpanded;
@@ -2152,6 +2212,8 @@ class MainForm : Form
     private readonly CheckBox _chkTextForceActions;
     private readonly NeonButton _btnTextEncrypt, _btnTextDecrypt;
     private readonly Label _lblStatusText;
+    private readonly Label _lblPasswordStrengthText;
+    private readonly PasswordStrengthMeter _meterPasswordStrengthText;
 
     // -----------------------------------------------------------------------
     // VAULT TAB controls
@@ -2165,6 +2227,8 @@ class MainForm : Form
     private readonly TreeView _tvVaultContents;
     private readonly Label _lblVaultEmptyHint;
     private readonly Label _lblStatusVault;
+    private readonly Label _lblPasswordStrengthVault;
+    private readonly PasswordStrengthMeter _meterPasswordStrengthVault;
     private readonly Label _lblVaultSelection;
     private readonly NeonButton _btnMountVault;
     private readonly NeonButton _btnCreateVault;
@@ -2198,6 +2262,8 @@ class MainForm : Form
     private Action<string?, bool>? _openAddContactDialog;
     private Action<string>? _openDeliveryWithSource;
     private CancellationTokenSource? _cts;
+    private const int MinPasswordLength = 12;
+    private const int RecommendedPasswordLength = 16;
     private DateTime _fileProgressStartUtc;
     private string _fileProgressStage = "processing";
     private static readonly Regex CliProgressRe = new(
@@ -2268,6 +2334,8 @@ class MainForm : Form
 
         _txtPassword = MakeTextBox(password: true); _txtPassword.PlaceholderText = "Password...";
         _txtConfirm  = MakeTextBox(password: true); _txtConfirm.PlaceholderText  = "Confirm password...";
+        _txtPassword.TextChanged += (_, _) => UpdatePasswordStrengthIndicator(_lblPasswordStrengthFile!, _meterPasswordStrengthFile!, _txtPassword.Text, _txtConfirm.Text);
+        _txtConfirm.TextChanged += (_, _) => UpdatePasswordStrengthIndicator(_lblPasswordStrengthFile!, _meterPasswordStrengthFile!, _txtPassword.Text, _txtConfirm.Text);
         _pwPanel = new TableLayoutPanel
         {
             Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1,
@@ -2278,6 +2346,8 @@ class MainForm : Form
         _pwPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         _pwPanel.Controls.Add(MakeLabeled("PASSWORD", _txtPassword), 0, 0);
         _pwPanel.Controls.Add(MakeLabeled("CONFIRM",  _txtConfirm),  1, 0);
+        _lblPasswordStrengthFile = MakePasswordStrengthLabel();
+        _meterPasswordStrengthFile = MakePasswordStrengthMeter();
 
         _txtPrivkey = MakeTextBox(); _txtPrivkey.PlaceholderText = "Public key path(s) (.bin/.pem). Separate multiple with ;";
         _btnBrowsePrivkey   = new NeonButton { Text = "BROWSE",       Dock = DockStyle.Fill, Margin = new Padding(3, 2, 0, 2) };
@@ -2366,6 +2436,8 @@ class MainForm : Form
 
         _txtPasswordText = MakeTextBox(password: true); _txtPasswordText.PlaceholderText = "Password...";
         _txtConfirmText  = MakeTextBox(password: true); _txtConfirmText.PlaceholderText  = "Confirm...";
+        _txtPasswordText.TextChanged += (_, _) => UpdatePasswordStrengthIndicator(_lblPasswordStrengthText!, _meterPasswordStrengthText!, _txtPasswordText.Text, _txtConfirmText.Text);
+        _txtConfirmText.TextChanged += (_, _) => UpdatePasswordStrengthIndicator(_lblPasswordStrengthText!, _meterPasswordStrengthText!, _txtPasswordText.Text, _txtConfirmText.Text);
         _pwPanelText = new TableLayoutPanel
         {
             Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1,
@@ -2376,6 +2448,8 @@ class MainForm : Form
         _pwPanelText.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         _pwPanelText.Controls.Add(MakeLabeled("PASSWORD", _txtPasswordText), 0, 0);
         _pwPanelText.Controls.Add(MakeLabeled("CONFIRM",  _txtConfirmText),  1, 0);
+        _lblPasswordStrengthText = MakePasswordStrengthLabel();
+        _meterPasswordStrengthText = MakePasswordStrengthMeter();
 
         _txtPrivkeyText = MakeTextBox(); _txtPrivkeyText.PlaceholderText = "Key file path(s) (.bin/.pem). Separate multiple with ;";
         var btnBrowseText = new NeonButton { Text = "BROWSE",       Dock = DockStyle.Fill, Margin = new Padding(3, 2, 0, 2) };
@@ -2459,6 +2533,7 @@ class MainForm : Form
         _toggleVault.SelectionChanged += OnToggleVaultChanged;
 
         _txtPasswordVault = MakeTextBox(password: true); _txtPasswordVault.PlaceholderText = "Password...";
+        _txtPasswordVault.TextChanged += (_, _) => UpdatePasswordStrengthIndicator(_lblPasswordStrengthVault!, _meterPasswordStrengthVault!, _txtPasswordVault.Text);
         _pwPanelVault = new TableLayoutPanel
         {
             Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 1,
@@ -2467,6 +2542,8 @@ class MainForm : Form
         _pwPanelVault.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         _pwPanelVault.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         _pwPanelVault.Controls.Add(MakeLabeled("PASSWORD", _txtPasswordVault), 0, 0);
+        _lblPasswordStrengthVault = MakePasswordStrengthLabel();
+        _meterPasswordStrengthVault = MakePasswordStrengthMeter();
 
         _txtPrivkeyVault = MakeTextBox(); _txtPrivkeyVault.PlaceholderText = "Private key (.bin/.pem)";
         var btnBrowseVault = new NeonButton { Text = "BROWSE",       Dock = DockStyle.Fill, Margin = new Padding(3, 2, 0, 2) };
@@ -2599,6 +2676,9 @@ class MainForm : Form
                 await RefreshVaultContentsAsync();
             }
         };
+        UpdatePasswordStrengthIndicator(_lblPasswordStrengthFile, _meterPasswordStrengthFile, _txtPassword.Text, _txtConfirm.Text);
+        UpdatePasswordStrengthIndicator(_lblPasswordStrengthText, _meterPasswordStrengthText, _txtPasswordText.Text, _txtConfirmText.Text);
+        UpdatePasswordStrengthIndicator(_lblPasswordStrengthVault, _meterPasswordStrengthVault, _txtPasswordVault.Text);
 
         _vaultTreeMenu = new ContextMenuStrip
         {
@@ -2688,7 +2768,7 @@ class MainForm : Form
         outerFile.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));  // 1: toggle
         outerFile.RowStyles.Add(new RowStyle(SizeType.Absolute, 92));  // 2: drop zone
         outerFile.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));  // 3: output path
-        outerFile.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));  // 4: mode panel
+        outerFile.RowStyles.Add(new RowStyle(SizeType.Absolute, 64));  // 4: mode panel
         outerFile.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));  // 5: advanced toggle
         outerFile.RowStyles.Add(new RowStyle(SizeType.Absolute, 0));   // 6: options (collapsed)
         outerFile.RowStyles.Add(new RowStyle(SizeType.Percent, 100));  // 7: log
@@ -2719,9 +2799,19 @@ class MainForm : Form
         outerFile.Controls.Add(outRow, 0, 3);
 
         var modeContainerFile = new Panel { Dock = DockStyle.Fill };
+        var pwContainerFile = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2,
+            BackColor = Theme.Bg, Margin = new Padding(0),
+        };
+        pwContainerFile.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        pwContainerFile.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+        pwContainerFile.RowStyles.Add(new RowStyle(SizeType.Absolute, 18));
         _pwPanel.Dock = DockStyle.Fill;
+        pwContainerFile.Controls.Add(_pwPanel, 0, 0);
+        pwContainerFile.Controls.Add(MakePasswordStrengthRow(_lblPasswordStrengthFile, _meterPasswordStrengthFile), 0, 1);
         _pqcPanel.Dock = DockStyle.Top;
-        modeContainerFile.Controls.Add(_pwPanel);
+        modeContainerFile.Controls.Add(pwContainerFile);
         modeContainerFile.Controls.Add(_pqcPanel);
         outerFile.Controls.Add(modeContainerFile, 0, 4);
 
@@ -2778,7 +2868,7 @@ class MainForm : Form
         };
         outerText.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));      // 0: header
         outerText.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));      // 1: toggle
-        outerText.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));      // 2: mode panel
+        outerText.RowStyles.Add(new RowStyle(SizeType.Absolute, 64));      // 2: mode panel
         outerText.RowStyles.Add(new RowStyle(SizeType.Percent, 50));       // 3: input
         outerText.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));      // 4: buttons
         outerText.RowStyles.Add(new RowStyle(SizeType.Percent, 50));       // 5: output
@@ -2790,9 +2880,19 @@ class MainForm : Form
         outerText.Controls.Add(_toggleText, 0, 1);
 
         var modeContainerText = new Panel { Dock = DockStyle.Fill };
+        var pwContainerText = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2,
+            BackColor = Theme.Bg, Margin = new Padding(0),
+        };
+        pwContainerText.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        pwContainerText.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+        pwContainerText.RowStyles.Add(new RowStyle(SizeType.Absolute, 18));
         _pwPanelText.Dock = DockStyle.Fill;
+        pwContainerText.Controls.Add(_pwPanelText, 0, 0);
+        pwContainerText.Controls.Add(MakePasswordStrengthRow(_lblPasswordStrengthText, _meterPasswordStrengthText), 0, 1);
         _pqcPanelText.Dock = DockStyle.Fill;
-        modeContainerText.Controls.Add(_pwPanelText);
+        modeContainerText.Controls.Add(pwContainerText);
         modeContainerText.Controls.Add(_pqcPanelText);
         outerText.Controls.Add(modeContainerText, 0, 2);
 
@@ -2862,7 +2962,7 @@ class MainForm : Form
         outerVault.RowStyles.Add(new RowStyle(SizeType.Absolute, 68));    // 1: drop zone
         outerVault.RowStyles.Add(new RowStyle(SizeType.Absolute, 0));     // 2: drive letter (hidden)
         outerVault.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));    // 3: toggle
-        outerVault.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));    // 4: mode panel
+        outerVault.RowStyles.Add(new RowStyle(SizeType.Absolute, 64));    // 4: mode panel
         outerVault.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));    // 5: load vault
         outerVault.RowStyles.Add(new RowStyle(SizeType.Percent, 62));     // 6: vault explorer
         outerVault.RowStyles.Add(new RowStyle(SizeType.Percent, 38));     // 7: log
@@ -2893,9 +2993,19 @@ class MainForm : Form
         outerVault.Controls.Add(_toggleVault, 0, 3);
 
         var modeContainerVault = new Panel { Dock = DockStyle.Fill };
+        var pwContainerVault = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2,
+            BackColor = Theme.Bg, Margin = new Padding(0),
+        };
+        pwContainerVault.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        pwContainerVault.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+        pwContainerVault.RowStyles.Add(new RowStyle(SizeType.Absolute, 18));
         _pwPanelVault.Dock = DockStyle.Fill;
+        pwContainerVault.Controls.Add(_pwPanelVault, 0, 0);
+        pwContainerVault.Controls.Add(MakePasswordStrengthRow(_lblPasswordStrengthVault, _meterPasswordStrengthVault), 0, 1);
         _pqcPanelVault.Dock = DockStyle.Fill;
-        modeContainerVault.Controls.Add(_pwPanelVault);
+        modeContainerVault.Controls.Add(pwContainerVault);
         modeContainerVault.Controls.Add(_pqcPanelVault);
         outerVault.Controls.Add(modeContainerVault, 0, 4);
 
@@ -6565,6 +6675,7 @@ class MainForm : Form
         lblDelPasswordStrength.AutoEllipsis = true;
         lblDelPasswordStrength.Dock = DockStyle.Fill;
         lblDelPasswordStrength.TextAlign = ContentAlignment.MiddleLeft;
+        var meterDelPasswordStrength = MakePasswordStrengthMeter();
         NeonButton btnDelCreate = new();
         var delProgress = new NeonProgressBar
         {
@@ -6696,39 +6807,15 @@ class MainForm : Form
         {
             string pw = txtDelPassword.Text ?? string.Empty;
             int len = pw.Length;
-            bool hasUpper = pw.Any(char.IsUpper);
-            bool hasLower = pw.Any(char.IsLower);
-            bool hasDigit = pw.Any(char.IsDigit);
-            bool hasSymbol = pw.Any(ch => !char.IsLetterOrDigit(ch));
-            int classes = (hasUpper ? 1 : 0) + (hasLower ? 1 : 0) + (hasDigit ? 1 : 0) + (hasSymbol ? 1 : 0);
-            string strength;
-            Color strengthColor;
-            if (len == 0)
-            {
-                strength = "Required";
-                strengthColor = Theme.TextDim;
-            }
-            else if (len < 8)
-            {
-                strength = "Too short (min 8)";
-                strengthColor = Theme.Error;
-            }
-            else if (len >= 12 && classes >= 3)
-            {
-                strength = "Strong";
-                strengthColor = Theme.Accent;
-            }
-            else
-            {
-                strength = "Okay";
-                strengthColor = Theme.AccentDim;
-            }
-            lblDelPasswordStrength.Text = $"Password strength: {strength}";
-            lblDelPasswordStrength.ForeColor = strengthColor;
+            var deliveryStrength = EvaluatePasswordStrength(pw);
+            lblDelPasswordStrength.Text = $"Strength: {deliveryStrength.Text}";
+            lblDelPasswordStrength.ForeColor = deliveryStrength.Color;
+            meterDelPasswordStrength.Level = deliveryStrength.Level;
+            meterDelPasswordStrength.ActiveColor = deliveryStrength.Color;
 
             bool nameOk = !string.IsNullOrWhiteSpace(txtDelName.Text);
             bool outOk = !string.IsNullOrWhiteSpace(txtDelOutputDir.Text);
-            bool passwordOk = len >= 8;
+            bool passwordOk = len >= MinPasswordLength;
             bool confirmOk = string.Equals(txtDelPassword.Text, txtDelPasswordConfirm.Text, StringComparison.Ordinal);
             bool sourcesOk = lstDelSources.Items.Count > 0;
             bool formatOk = rbDelZip.Checked || rbDelPackage.Checked || rbDelExe.Checked;
@@ -6742,7 +6829,7 @@ class MainForm : Form
             else if (!outOk)
                 validationHint = "Select an output folder.";
             else if (!passwordOk)
-                validationHint = "Password must be at least 8 characters.";
+                validationHint = $"Password must be at least {MinPasswordLength} characters.";
             else if (!confirmOk && (!string.IsNullOrWhiteSpace(txtDelPassword.Text) || !string.IsNullOrWhiteSpace(txtDelPasswordConfirm.Text)))
                 validationHint = "Passwords do not match.";
             else if (!formatOk)
@@ -7037,7 +7124,7 @@ class MainForm : Form
             if (!File.Exists(ExePath)) { DelStatus("obsidianq.exe not found.", true); return; }
             if (lstDelSources.Items.Count == 0) { DelStatus("Add at least one source file/folder.", true); return; }
             if (string.IsNullOrWhiteSpace(txtDelPassword.Text)) { DelStatus("Enter package password.", true); return; }
-            if (txtDelPassword.Text.Length < 8) { DelStatus("Password too short. Minimum length is 8 characters.", true); return; }
+            if (txtDelPassword.Text.Length < MinPasswordLength) { DelStatus($"Password too short. Minimum length is {MinPasswordLength} characters.", true); return; }
             if (!string.Equals(txtDelPassword.Text, txtDelPasswordConfirm.Text, StringComparison.Ordinal))
             {
                 DelStatus("Password confirmation does not match.", true);
@@ -7290,11 +7377,13 @@ class MainForm : Form
             "SECURE DELIVERY",
             "Prefer .obsq for ObsidianQ users, use ZIP bundles for customer delivery, and reserve Single EXE for compatibility-only cases."), 0, 0);
         outerDelivery.Controls.Add(delAccess, 0, 1);
-        var delSummaryRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = Theme.Bg, Margin = new Padding(0) };
-        delSummaryRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        delSummaryRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        var delSummaryRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1, BackColor = Theme.Bg, Margin = new Padding(0) };
+        delSummaryRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        delSummaryRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 220));
+        delSummaryRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 58));
         delSummaryRow.Controls.Add(lblDelSummary, 0, 0);
         delSummaryRow.Controls.Add(lblDelPasswordStrength, 1, 0);
+        delSummaryRow.Controls.Add(meterDelPasswordStrength, 2, 0);
         outerDelivery.Controls.Add(delSummaryRow, 0, 2);
         outerDelivery.Controls.Add(delSourcesButtons, 0, 3);
         outerDelivery.Controls.Add(lstDelSources, 0, 4);
@@ -7906,6 +7995,82 @@ class MainForm : Form
         return p;
     }
 
+    private static Label MakePasswordStrengthLabel()
+    {
+        var lbl = MakeLabel($"Password: Use 5+ words or {RecommendedPasswordLength}+ chars.", 7.5f);
+        lbl.ForeColor = Theme.TextDim;
+        lbl.AutoSize = false;
+        lbl.AutoEllipsis = true;
+        lbl.Dock = DockStyle.Fill;
+        lbl.TextAlign = ContentAlignment.MiddleLeft;
+        lbl.Margin = new Padding(0);
+        return lbl;
+    }
+
+    private static PasswordStrengthMeter MakePasswordStrengthMeter()
+        => new() { BackColor = Theme.Bg };
+
+    private static TableLayoutPanel MakePasswordStrengthRow(Label label, PasswordStrengthMeter meter)
+    {
+        var row = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1,
+            BackColor = Theme.Bg, Margin = new Padding(0),
+        };
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 58));
+        row.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        row.Controls.Add(label, 0, 0);
+        row.Controls.Add(meter, 1, 0);
+        return row;
+    }
+
+    private readonly record struct PasswordStrengthInfo(string Text, Color Color, bool MeetsMinimumForNewEncryption, int Level);
+
+    private static PasswordStrengthInfo EvaluatePasswordStrength(string? password)
+    {
+        string pw = password ?? string.Empty;
+        int len = pw.Length;
+        if (len == 0)
+            return new PasswordStrengthInfo(
+                $"Use 5+ words or {RecommendedPasswordLength}+ chars.",
+                Theme.TextDim,
+                false,
+                0);
+
+        bool hasUpper = pw.Any(char.IsUpper);
+        bool hasLower = pw.Any(char.IsLower);
+        bool hasDigit = pw.Any(char.IsDigit);
+        bool hasSymbol = pw.Any(ch => !char.IsLetterOrDigit(ch));
+        int classes = (hasUpper ? 1 : 0) + (hasLower ? 1 : 0) + (hasDigit ? 1 : 0) + (hasSymbol ? 1 : 0);
+
+        if (len < MinPasswordLength)
+            return new PasswordStrengthInfo($"Weak (min {MinPasswordLength})", Theme.Error, false, 1);
+        if (len < RecommendedPasswordLength)
+            return new PasswordStrengthInfo($"Okay ({RecommendedPasswordLength}+ recommended)", Theme.AccentDim, true, 2);
+        if (len >= 20 || classes >= 3)
+            return new PasswordStrengthInfo("Strong", Theme.Accent, true, 4);
+        return new PasswordStrengthInfo("Good", Theme.AccentDim, true, 3);
+    }
+
+    private static void UpdatePasswordStrengthIndicator(Label label, PasswordStrengthMeter meter, string? password, string? confirm = null)
+    {
+        if (!string.IsNullOrEmpty(confirm) && !string.Equals(password ?? string.Empty, confirm, StringComparison.Ordinal))
+        {
+            label.Text = "Password: Mismatch";
+            label.ForeColor = Theme.Error;
+            meter.Level = 1;
+            meter.ActiveColor = Theme.Error;
+            return;
+        }
+
+        var strength = EvaluatePasswordStrength(password);
+        label.Text = $"Password: {strength.Text}";
+        label.ForeColor = strength.Color;
+        meter.Level = strength.Level;
+        meter.ActiveColor = strength.Color;
+    }
+
     private static void BrowseKeyFile(TextBox target)
     {
         using var dlg = new OpenFileDialog
@@ -8204,12 +8369,14 @@ class MainForm : Form
         bool isPqc = _toggle.Selected == SegmentedToggle.Segment.Pqc;
         _pwPanel.Visible  = !isPqc;
         _pqcPanel.Visible =  isPqc;
+        _lblPasswordStrengthFile.Visible = !isPqc;
 
         if (_btnAdvanced.Parent is TableLayoutPanel outer)
-            outer.RowStyles[4] = new RowStyle(SizeType.Absolute, isPqc ? 26 : 44);
+            outer.RowStyles[4] = new RowStyle(SizeType.Absolute, isPqc ? 26 : 64);
 
         UpdateKeyPlaceholder();
         if (isPqc) TryAutoLoadDefaultKeyPath(force: false);
+        UpdatePasswordStrengthIndicator(_lblPasswordStrengthFile, _meterPasswordStrengthFile, _txtPassword.Text, _txtConfirm.Text);
     }
 
     private void OnFileDropped(object? sender, string path)
@@ -9400,11 +9567,13 @@ class MainForm : Form
         bool isPqc = _toggleText.Selected == SegmentedToggle.Segment.Pqc;
         _pwPanelText.Visible  = !isPqc;
         _pqcPanelText.Visible =  isPqc;
+        _lblPasswordStrengthText.Visible = !isPqc;
 
         if (_toggleText.Parent is TableLayoutPanel outerText)
-            outerText.RowStyles[2] = new RowStyle(SizeType.Absolute, isPqc ? 26 : 44);
+            outerText.RowStyles[2] = new RowStyle(SizeType.Absolute, isPqc ? 26 : 64);
 
         if (isPqc) TryAutoLoadTextKeyPath(force: false);
+        UpdatePasswordStrengthIndicator(_lblPasswordStrengthText, _meterPasswordStrengthText, _txtPasswordText.Text, _txtConfirmText.Text);
         UpdateTextInputActionHints();
     }
 
@@ -9449,6 +9618,10 @@ class MainForm : Form
         if (isPqc) TrySilentKeyLoad(_txtPrivkeyText, DefaultPubKeyNames);
         if (!isPqc && string.IsNullOrEmpty(_txtPasswordText.Text))
         { TextStatus("Enter a password.", error: true); return; }
+        if (!isPqc && _txtPasswordText.Text.Length < MinPasswordLength)
+        { TextStatus($"Password must be at least {MinPasswordLength} characters for new encryption.", error: true); return; }
+        if (!isPqc && !string.Equals(_txtPasswordText.Text, _txtConfirmText.Text, StringComparison.Ordinal))
+        { TextStatus("Passwords do not match.", error: true); return; }
         if (isPqc && string.IsNullOrWhiteSpace(_txtPrivkeyText.Text))
         { TextStatus("No public key found - use BROWSE or Settings > Generate New Keypair.", error: true); return; }
         List<string>? textRecipientKeys = null;
@@ -9650,11 +9823,13 @@ class MainForm : Form
         bool isPqc = _toggleVault.Selected == SegmentedToggle.Segment.Pqc;
         _pwPanelVault.Visible  = !isPqc;
         _pqcPanelVault.Visible =  isPqc;
+        _lblPasswordStrengthVault.Visible = !isPqc;
 
         if (_toggleVault.Parent is TableLayoutPanel outerVault)
-            outerVault.RowStyles[4] = new RowStyle(SizeType.Absolute, isPqc ? 26 : 44);
+            outerVault.RowStyles[4] = new RowStyle(SizeType.Absolute, isPqc ? 26 : 64);
 
         if (isPqc) TryAutoLoadVaultKeyPath(force: false);
+        UpdatePasswordStrengthIndicator(_lblPasswordStrengthVault, _meterPasswordStrengthVault, _txtPasswordVault.Text);
     }
 
     private static bool IsWinFspInstalled()
@@ -11258,6 +11433,11 @@ class MainForm : Form
         {
             if (string.IsNullOrEmpty(_txtPassword.Text)) { err = "Enter a password."; return false; }
             bool isEncrypt = !_dropZone.FilePath.EndsWith(".obsq", StringComparison.OrdinalIgnoreCase);
+            if (isEncrypt && _txtPassword.Text.Length < MinPasswordLength)
+            {
+                err = $"Password must be at least {MinPasswordLength} characters for new encryption.";
+                return false;
+            }
             if (isEncrypt && _txtPassword.Text != _txtConfirm.Text) { err = "Passwords do not match."; return false; }
         }
         else
