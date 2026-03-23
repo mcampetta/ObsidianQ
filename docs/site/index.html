@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ObsidianQ | Local-First Encryption and Secure Delivery</title>
-  <meta name="description" content="ObsidianQ is a local-first encryption toolkit for files, text, vaults, inspect workflows, and self-extracting secure delivery packages.">
+  <meta name="description" content="ObsidianQ is a local-first encryption toolkit for files, text, vaults, inspect workflows, hybrid trusted-contact protection, and Secure Delivery ZIP bundles with offline browser decryptor support.">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -23,8 +23,8 @@
       <p class="eyebrow">ObsidianQ</p>
       <h1>Secure File Encryption for the Modern Era</h1>
       <p class="lead">
-        ObsidianQ combines password workflows, trusted-contact recipient encryption, encrypted vaults, package inspection, and
-        self-extracting secure delivery in one practical desktop application.
+        ObsidianQ combines password workflows, hybrid trusted-contact recipient encryption, encrypted vaults, package inspection,
+        built-in clipboard tools, and Secure Delivery ZIP bundles with offline browser decryptor support in one practical desktop application.
       </p>
       <div class="hero-actions">
         <a class="btn btn-primary" href="https://github.com/mcampetta/ObsidianQ">View on GitHub</a>
@@ -64,9 +64,18 @@
     <section class="card">
       <h2>Portable Secure Delivery</h2>
       <ul>
-        <li>Create portable ZIP bundles directly from the launcher.</li>
+        <li>Create ZIP bundles with an offline browser decryptor directly from the launcher.</li>
         <li>Use single EXE packages only when recipient compatibility requires it.</li>
         <li>Inspect Secure Delivery ZIP and EXE packages before extraction to verify metadata and payload integrity.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Clipboard Helper</h2>
+      <ul>
+        <li>Launch a built-in tray helper for quick clipboard encrypt/decrypt actions.</li>
+        <li>Import contacts and copy your public identity directly from the tray menu.</li>
+        <li>Configure startup and launcher auto-open behavior from Settings.</li>
       </ul>
     </section>
 
@@ -123,7 +132,7 @@
     <section class="card">
       <h2>Security Architecture</h2>
       <ul>
-        <li><strong>Recipient Exchange:</strong> Kyber Round 3 via pqcrypto-kyber</li>
+        <li><strong>Recipient Exchange:</strong> hybrid Kyber Round 3 + X25519 for current Secure Contacts protection</li>
         <li><strong>Authenticated Encryption:</strong> XChaCha20-Poly1305</li>
         <li><strong>Password Hardening:</strong> Argon2id</li>
         <li><strong>Hashing & Fingerprints:</strong> BLAKE3</li>
@@ -161,9 +170,9 @@
         <div><strong>Text</strong><span>Protect short text, clipboard content, or pasted ciphertext using password mode or Secure Contacts recipient exchange.</span></div>
         <div><strong>Vault</strong><span>Create and mount encrypted vaults with password protection or Secure Contacts recipient access control.</span></div>
         <div><strong>Inspect</strong><span>Review `.obsq`, vault, ZIP package, and Single EXE package metadata without decrypting content.</span></div>
-        <div><strong>Secure Delivery</strong><span>Create safer ZIP bundles by default, or use Single EXE delivery as an advanced compatibility option.</span></div>
+        <div><strong>Secure Delivery</strong><span>Create ZIP bundles with an offline browser decryptor by default, or use Single EXE delivery as an advanced compatibility option.</span></div>
         <div><strong>Secure Contacts</strong><span>Manage your identity and trusted contacts for recipient-based protection.</span></div>
-        <div><strong>Settings</strong><span>Configure behavior, integration options, and key management actions.</span></div>
+        <div><strong>Settings</strong><span>Configure behavior, integration options, clipboard helper options, and key management actions.</span></div>
         <div><strong>About</strong><span>Read security model guidance and project details.</span></div>
       </div>
     </section>
@@ -181,8 +190,8 @@
       </article>
       <article class="card">
         <h2>Version</h2>
-        <p><strong>ObsidianQ Version:</strong> 1.0</p>
-        <p>Built for local-first encryption, practical verification, and trusted-recipient workflows.</p>
+        <p><strong>ObsidianQ Version:</strong> 1.4.0</p>
+        <p>Built for local-first encryption, practical verification, hybrid recipient protection, and recipient-friendly delivery workflows.</p>
         <p class="muted">Local-first security | Modern cryptography | Trusted file exchange</p>
       </article>
     </section>
