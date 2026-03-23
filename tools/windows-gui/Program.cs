@@ -24,6 +24,7 @@ namespace ObsidianQ.Launcher;
 static class Program
 {
     private const string SingleInstanceMutexName = @"Local\ObsidianQ.Launcher.SingleInstance";
+    private const string ClipboardAgentMutexName = @"Local\ObsidianQ.Launcher.ClipboardAgent";
     private static readonly string SingleInstancePipeName = $"ObsidianQ.Launcher.Pipe.{Environment.UserName}";
     private const string EmbeddedSfxMagic = "OBSQSFX1";
     private const int EmbeddedSfxTrailerSize = 24; // zipLen(8) + cliLen(8) + magic(8)
@@ -57,6 +58,19 @@ static class Program
     static void Main(string[] args)
     {
         LogStartup(args);
+
+        bool runClipboardAgent = args.Any(a => string.Equals(a, "--clipboard-agent", StringComparison.OrdinalIgnoreCase));
+        if (runClipboardAgent)
+        {
+            using var trayMutex = new Mutex(initiallyOwned: true, ClipboardAgentMutexName, out bool createdNew);
+            if (!createdNew) return;
+
+            Application.SetHighDpiMode(HighDpiMode.SystemAware);
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+            Application.Run(new ClipboardAgentContext());
+            return;
+        }
 
         string hostExePath = Environment.ProcessPath ?? Application.ExecutablePath;
         if (TryGetEmbeddedSfxInfo(hostExePath, out var sfxInfo))
@@ -2171,6 +2185,927 @@ class VaultInitForm : Form
     }
 }
 
+internal sealed class ClipboardAgentContext : ApplicationContext
+{
+    private const string LauncherPrefsKey = @"Software\ObsidianQ\Launcher";
+    private readonly NotifyIcon _notifyIcon;
+    private readonly ContextMenuStrip _menu;
+
+    private enum ContainerAccessModeHint { Unknown, Password, Pqc }
+
+    public ClipboardAgentContext()
+    {
+        _menu = new ContextMenuStrip
+        {
+            ShowImageMargin = false,
+            ShowCheckMargin = false,
+            BackColor = Theme.Surface,
+            ForeColor = Theme.TextMain,
+            Font = Theme.SafeMono(8.5f),
+        };
+
+        var encryptItem = new ToolStripMenuItem("Encrypt Clipboard...");
+        var decryptItem = new ToolStripMenuItem("Decrypt Clipboard...");
+        var importContactItem = new ToolStripMenuItem("Import Contact From Clipboard...");
+        var copyIdentityItem = new ToolStripMenuItem("Copy My Public Identity");
+        var openLauncherItem = new ToolStripMenuItem("Open Launcher");
+        var exitItem = new ToolStripMenuItem("Exit");
+
+        encryptItem.Click += async (_, _) => await EncryptClipboardAsync();
+        decryptItem.Click += async (_, _) => await DecryptClipboardAsync();
+        importContactItem.Click += async (_, _) => await ImportContactFromClipboardAsync();
+        copyIdentityItem.Click += async (_, _) => await CopyMyPublicIdentityAsync();
+        openLauncherItem.Click += (_, _) => OpenLauncher();
+        exitItem.Click += (_, _) => ExitThread();
+
+        _menu.Items.Add(encryptItem);
+        _menu.Items.Add(decryptItem);
+        _menu.Items.Add(new ToolStripSeparator());
+        _menu.Items.Add(importContactItem);
+        _menu.Items.Add(copyIdentityItem);
+        _menu.Items.Add(new ToolStripSeparator());
+        _menu.Items.Add(openLauncherItem);
+        _menu.Items.Add(exitItem);
+
+        _notifyIcon = new NotifyIcon
+        {
+            Text = "ObsidianQ Clipboard Helper",
+            Visible = true,
+            ContextMenuStrip = _menu,
+            Icon = LoadTrayIcon(),
+        };
+        _notifyIcon.MouseUp += (_, e) =>
+        {
+            if (e.Button == MouseButtons.Left || e.Button == MouseButtons.Right)
+                _menu.Show(Cursor.Position);
+        };
+        _notifyIcon.DoubleClick += (_, _) => OpenLauncher();
+        _notifyIcon.ShowBalloonTip(3000, "ObsidianQ Clipboard Helper", "Clipboard actions are available from the tray icon.", ToolTipIcon.Info);
+    }
+
+    protected override void ExitThreadCore()
+    {
+        _notifyIcon.Visible = false;
+        _notifyIcon.Dispose();
+        base.ExitThreadCore();
+    }
+
+    private static Icon LoadTrayIcon()
+    {
+        try
+        {
+            string exe = Environment.ProcessPath ?? Application.ExecutablePath;
+            return Icon.ExtractAssociatedIcon(exe) ?? SystemIcons.Application;
+        }
+        catch
+        {
+            return SystemIcons.Application;
+        }
+    }
+
+    private static string ResolveCliPath()
+    {
+        string launcherDir = Path.GetDirectoryName(Environment.ProcessPath ?? Application.ExecutablePath) ?? Environment.CurrentDirectory;
+        string candidate = Path.Combine(launcherDir, "obsidianq.exe");
+        if (File.Exists(candidate)) return candidate;
+        throw new InvalidOperationException("obsidianq.exe was not found next to the launcher.");
+    }
+
+    private static string ResolveLauncherPath()
+        => Environment.ProcessPath ?? Application.ExecutablePath;
+
+    private static string? GetLocalKeysDir()
+    {
+        string local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        return string.IsNullOrWhiteSpace(local) ? null : Path.Combine(local, "ObsidianQ", "keys");
+    }
+
+    private static string? InferPrivateKeyPathFromPublicForTray(string? pubkeyPath)
+    {
+        if (string.IsNullOrWhiteSpace(pubkeyPath)) return null;
+        string file = Path.GetFileName(pubkeyPath);
+        if (string.IsNullOrWhiteSpace(file)) return null;
+        string inferredFile = file
+            .Replace("_pub", "_priv", StringComparison.OrdinalIgnoreCase)
+            .Replace("public", "private", StringComparison.OrdinalIgnoreCase);
+        if (string.Equals(inferredFile, file, StringComparison.OrdinalIgnoreCase))
+            return null;
+        return Path.Combine(Path.GetDirectoryName(pubkeyPath) ?? string.Empty, inferredFile);
+    }
+
+    private static IEnumerable<string> ResolveCandidatePrivateKeys()
+    {
+        var dirs = new[]
+        {
+            GetLocalKeysDir(),
+            Path.GetDirectoryName(ResolveLauncherPath()),
+        };
+
+        var files = dirs
+            .Where(d => !string.IsNullOrWhiteSpace(d) && Directory.Exists(d))
+            .SelectMany(d => Directory.EnumerateFiles(d!)
+                .Where(f =>
+                {
+                    string name = Path.GetFileName(f);
+                    string ext = Path.GetExtension(name);
+                    if (!name.StartsWith("obsidianq", StringComparison.OrdinalIgnoreCase)) return false;
+                    if (!ext.Equals(".bin", StringComparison.OrdinalIgnoreCase) && !ext.Equals(".pem", StringComparison.OrdinalIgnoreCase)) return false;
+                    return name.Contains("_pub", StringComparison.OrdinalIgnoreCase)
+                        || name.Contains("_priv", StringComparison.OrdinalIgnoreCase)
+                        || name.Contains("public", StringComparison.OrdinalIgnoreCase)
+                        || name.Contains("private", StringComparison.OrdinalIgnoreCase);
+                }))
+            .Select(f => new FileInfo(f))
+            .OrderByDescending(f => f.LastWriteTimeUtc)
+            .ThenByDescending(f => f.DirectoryName?.Contains("\\ObsidianQ\\keys", StringComparison.OrdinalIgnoreCase) ?? false)
+            .ToList();
+
+        var ordered = new List<string>();
+
+        foreach (var pub in files.Where(f => IsHybridKeyFile(f.FullName, wantPublic: true)))
+        {
+            string? inferred = InferPrivateKeyPathFromPublicForTray(pub.FullName);
+            if (!string.IsNullOrWhiteSpace(inferred) && File.Exists(inferred))
+                ordered.Add(inferred);
+        }
+
+        foreach (var priv in files.Where(f => IsHybridKeyFile(f.FullName, wantPublic: false)))
+            ordered.Add(priv.FullName);
+
+        foreach (var pub in files.Where(f => Path.GetFileName(f.FullName).Contains("_pub", StringComparison.OrdinalIgnoreCase)
+                                          || Path.GetFileName(f.FullName).Contains("public", StringComparison.OrdinalIgnoreCase)))
+        {
+            string? inferred = InferPrivateKeyPathFromPublicForTray(pub.FullName);
+            if (!string.IsNullOrWhiteSpace(inferred) && File.Exists(inferred))
+                ordered.Add(inferred);
+        }
+
+        foreach (var priv in files.Where(f => Path.GetFileName(f.FullName).Contains("_priv", StringComparison.OrdinalIgnoreCase)
+                                           || Path.GetFileName(f.FullName).Contains("private", StringComparison.OrdinalIgnoreCase)))
+            ordered.Add(priv.FullName);
+
+        return ordered
+            .Where(p => !string.IsNullOrWhiteSpace(p) && File.Exists(p))
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static string? ResolvePreferredPublicKey()
+    {
+        var dirs = new[]
+        {
+            GetLocalKeysDir(),
+            Path.GetDirectoryName(ResolveLauncherPath()),
+        };
+
+        var files = dirs
+            .Where(d => !string.IsNullOrWhiteSpace(d) && Directory.Exists(d))
+            .SelectMany(d => Directory.EnumerateFiles(d!)
+                .Where(f =>
+                {
+                    string name = Path.GetFileName(f);
+                    string ext = Path.GetExtension(name);
+                    if (!name.StartsWith("obsidianq", StringComparison.OrdinalIgnoreCase)) return false;
+                    if (!ext.Equals(".bin", StringComparison.OrdinalIgnoreCase) && !ext.Equals(".pem", StringComparison.OrdinalIgnoreCase)) return false;
+                    return name.Contains("_pub", StringComparison.OrdinalIgnoreCase)
+                        || name.Contains("public", StringComparison.OrdinalIgnoreCase);
+                }))
+            .Select(f => new FileInfo(f))
+            .OrderByDescending(f => IsHybridKeyFile(f.FullName, wantPublic: true))
+            .ThenByDescending(f => f.LastWriteTimeUtc)
+            .ThenByDescending(f => f.DirectoryName?.Contains("\\ObsidianQ\\keys", StringComparison.OrdinalIgnoreCase) ?? false)
+            .Select(f => f.FullName)
+            .FirstOrDefault();
+
+        return string.IsNullOrWhiteSpace(files) ? null : files;
+    }
+
+    private static bool IsHybridKeyFile(string path, bool wantPublic)
+    {
+        try
+        {
+            byte[] raw = File.ReadAllBytes(path);
+            if (raw.Length >= 8)
+            {
+                string magic = Encoding.ASCII.GetString(raw, 0, 8);
+                return string.Equals(magic, wantPublic ? "OBSQHPK1" : "OBSQHSK1", StringComparison.Ordinal);
+            }
+        }
+        catch { }
+        return false;
+    }
+
+    private static async Task<(int ExitCode, string Stdout, string Stderr)> RunCliAsync(string arguments, string? stdinText = null)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = ResolveCliPath(),
+            Arguments = arguments,
+            RedirectStandardInput = stdinText != null,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+
+        using var proc = new Process { StartInfo = psi };
+        proc.Start();
+        if (stdinText != null)
+        {
+            await proc.StandardInput.WriteAsync(stdinText);
+            proc.StandardInput.Close();
+        }
+
+        string stdout = await proc.StandardOutput.ReadToEndAsync();
+        string stderr = await proc.StandardError.ReadToEndAsync();
+        await proc.WaitForExitAsync();
+        return (proc.ExitCode, stdout.Trim(), stderr.Trim());
+    }
+
+    private static ContainerAccessModeHint DetectObsqAccessModeFromBase64(string b64)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(b64)) return ContainerAccessModeHint.Unknown;
+            var sb = new StringBuilder(b64.Length);
+            foreach (char ch in b64)
+                if (!char.IsWhiteSpace(ch))
+                    sb.Append(ch);
+            byte[] raw = Convert.FromBase64String(sb.ToString());
+            if (raw.Length < 6) return ContainerAccessModeHint.Unknown;
+            if (raw[0] != (byte)'O' || raw[1] != (byte)'B' || raw[2] != (byte)'S' || raw[3] != (byte)'Q')
+                return ContainerAccessModeHint.Unknown;
+            return raw[5] switch
+            {
+                0 => ContainerAccessModeHint.Password,
+                1 => ContainerAccessModeHint.Pqc,
+                _ => ContainerAccessModeHint.Unknown,
+            };
+        }
+        catch
+        {
+            return ContainerAccessModeHint.Unknown;
+        }
+    }
+
+    private static string LoadClipboardTextOrThrow()
+    {
+        if (!Clipboard.ContainsText()) throw new InvalidOperationException("Clipboard does not contain text.");
+        string text = Clipboard.GetText();
+        if (string.IsNullOrWhiteSpace(text)) throw new InvalidOperationException("Clipboard text is empty.");
+        return text;
+    }
+
+    private async Task EncryptClipboardAsync()
+    {
+        try
+        {
+            string plaintext = LoadClipboardTextOrThrow();
+            using var prompt = new PasswordPromptForm("Encrypt Clipboard", confirm: true);
+            if (prompt.ShowDialog() != DialogResult.OK) return;
+
+            string stdin = prompt.Password + Environment.NewLine + plaintext;
+            var (code, stdout, stderr) = await RunCliAsync("encrypt --text --password-stdin", stdin);
+            if (code != 0)
+            {
+                ShowError(string.IsNullOrWhiteSpace(stderr) ? $"Encryption failed (exit {code})." : stderr);
+                return;
+            }
+
+            Clipboard.SetText(stdout);
+            ShowInfo("Clipboard encrypted. Ciphertext was copied back to the clipboard.");
+        }
+        catch (Exception ex)
+        {
+            ShowError(ex.Message);
+        }
+    }
+
+    private async Task DecryptClipboardAsync()
+    {
+        try
+        {
+            string ciphertext = LoadClipboardTextOrThrow();
+            var mode = DetectObsqAccessModeFromBase64(ciphertext);
+            if (mode == ContainerAccessModeHint.Unknown)
+            {
+                ShowError("Clipboard text does not look like ObsidianQ ciphertext.");
+                return;
+            }
+
+            string args;
+            string? stdin;
+            if (mode == ContainerAccessModeHint.Password)
+            {
+                using var prompt = new PasswordPromptForm("Decrypt Clipboard", confirm: false);
+                if (prompt.ShowDialog() != DialogResult.OK) return;
+                args = "decrypt --text --password-stdin";
+                stdin = prompt.Password + Environment.NewLine + ciphertext;
+            }
+            else
+            {
+                var candidateKeys = ResolveCandidatePrivateKeys().ToList();
+                if (candidateKeys.Count == 0)
+                {
+                    ShowError("No local private key was found for clipboard decrypt.");
+                    return;
+                }
+
+                string lastError = "Decryption failed.";
+                foreach (string privKey in candidateKeys)
+                {
+                    var attempt = await RunCliAsync($"decrypt --text --privkey \"{privKey}\"", ciphertext);
+                    if (attempt.ExitCode == 0)
+                    {
+                        Clipboard.SetText(attempt.Stdout);
+                        ShowInfo("Clipboard decrypted. Plaintext was copied back to the clipboard.");
+                        return;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(attempt.Stderr))
+                        lastError = attempt.Stderr;
+                }
+
+                ShowError(lastError);
+                return;
+            }
+
+            var (code, stdout, stderr) = await RunCliAsync(args, stdin);
+            if (code != 0)
+            {
+                ShowError(string.IsNullOrWhiteSpace(stderr) ? $"Decryption failed (exit {code})." : stderr);
+                return;
+            }
+
+            Clipboard.SetText(stdout);
+            ShowInfo("Clipboard decrypted. Plaintext was copied back to the clipboard.");
+        }
+        catch (Exception ex)
+        {
+            ShowError(ex.Message);
+        }
+    }
+
+    private async Task ImportContactFromClipboardAsync()
+    {
+        try
+        {
+            string clipboardText = LoadClipboardTextOrThrow();
+            if (!LooksLikeImportableContactText(clipboardText))
+            {
+                ShowError("Clipboard text does not look like a valid ObsidianQ public identity or public key.");
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            ShowInfo(ex.Message);
+            return;
+        }
+
+        using var prompt = new NamePromptForm();
+        if (prompt.ShowDialog() != DialogResult.OK) return;
+
+        string args = "contacts import --clipboard";
+        if (!string.IsNullOrWhiteSpace(prompt.ContactName))
+            args += $" --name \"{prompt.ContactName.Replace("\"", "\\\"")}\"";
+
+        var (code, stdout, stderr) = await RunCliAsync(args);
+        if (code == 0)
+            ShowInfo(string.IsNullOrWhiteSpace(stdout) ? "Contact imported from clipboard." : stdout);
+        else
+            ShowError(string.IsNullOrWhiteSpace(stderr) ? $"Contact import failed (exit {code})." : stderr);
+    }
+
+    private static async Task<string?> ComputeFingerprintAsync(string keyPath)
+    {
+        var result = await RunCliAsync($"exchange fingerprint --key \"{keyPath}\"");
+        return result.ExitCode == 0 && !string.IsNullOrWhiteSpace(result.Stdout) ? result.Stdout : null;
+    }
+
+    private static bool LooksLikeImportableContactText(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        const string begin = "-----BEGIN OBSIDIANQ PUBLIC IDENTITY-----";
+        const string end = "-----END OBSIDIANQ PUBLIC IDENTITY-----";
+        if (text.Contains(begin, StringComparison.Ordinal))
+        {
+            int s = text.IndexOf(begin, StringComparison.Ordinal);
+            int e = text.IndexOf(end, StringComparison.Ordinal);
+            if (s < 0 || e <= s) return false;
+            string body = text[(s + begin.Length)..e];
+            int keyIndex = body.IndexOf("key:", StringComparison.OrdinalIgnoreCase);
+            if (keyIndex < 0) return false;
+            string keyPart = body[(keyIndex + 4)..];
+            var sb = new StringBuilder(keyPart.Length);
+            foreach (char ch in keyPart)
+                if (!char.IsWhiteSpace(ch) && ch != ':')
+                    sb.Append(ch);
+            return TryDecodePublicKeyBytes(sb.ToString());
+        }
+
+        var compact = new StringBuilder(text.Length);
+        foreach (char ch in text)
+            if (!char.IsWhiteSpace(ch))
+                compact.Append(ch);
+        return TryDecodePublicKeyBytes(compact.ToString());
+    }
+
+    private static bool TryDecodePublicKeyBytes(string b64)
+    {
+        try
+        {
+            byte[] raw = Convert.FromBase64String(b64);
+            if (raw.Length == 1184) return true;
+            if (raw.Length == 8 + 1184 + 32 && Encoding.ASCII.GetString(raw, 0, 8).Equals("OBSQHPK1", StringComparison.Ordinal))
+                return true;
+        }
+        catch { }
+        return false;
+    }
+
+    private static (string Name, string Email, string Device) LoadLocalIdentityProfile()
+    {
+        string path = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "ObsidianQ",
+            "identity_profile_v1.tsv");
+        if (!File.Exists(path)) return (string.Empty, string.Empty, string.Empty);
+        try
+        {
+            string[] parts = File.ReadAllText(path, Encoding.UTF8).Split('\t');
+            return (
+                parts.Length > 0 ? parts[0].Trim() : string.Empty,
+                parts.Length > 1 ? parts[1].Trim() : string.Empty,
+                parts.Length > 2 ? parts[2].Trim() : string.Empty
+            );
+        }
+        catch
+        {
+            return (string.Empty, string.Empty, string.Empty);
+        }
+    }
+
+    private static bool IsHybridKeyPayload(byte[] raw)
+        => raw.Length == 8 + 1184 + 32
+           && Encoding.ASCII.GetString(raw, 0, 8).Equals("OBSQHPK1", StringComparison.Ordinal);
+
+    private static string InferIdentityAlgorithm(string keyBase64)
+    {
+        try
+        {
+            byte[] raw = Convert.FromBase64String(keyBase64);
+            return IsHybridKeyPayload(raw) ? "Kyber768-R3+X25519" : "ML-KEM-768";
+        }
+        catch
+        {
+            return "ML-KEM-768";
+        }
+    }
+
+    private static string FormatBase64ForDisplay(byte[] raw, int lineLen = 64)
+    {
+        string b64 = Convert.ToBase64String(raw);
+        var sb = new StringBuilder(b64.Length + (b64.Length / lineLen) + 8);
+        for (int i = 0; i < b64.Length; i += lineLen)
+            sb.AppendLine(b64.Substring(i, Math.Min(lineLen, b64.Length - i)));
+        return sb.ToString().TrimEnd();
+    }
+
+    private static string BuildPublicIdentityDocument(
+        string keyBase64,
+        string fingerprint,
+        string? name = null,
+        string? email = null,
+        string? device = null,
+        string? created = null)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("-----BEGIN OBSIDIANQ PUBLIC IDENTITY-----");
+        sb.AppendLine("version:1");
+        if (!string.IsNullOrWhiteSpace(name)) sb.AppendLine($"name:{name.Trim()}");
+        if (!string.IsNullOrWhiteSpace(email)) sb.AppendLine($"email:{email.Trim()}");
+        if (!string.IsNullOrWhiteSpace(device)) sb.AppendLine($"device:{device.Trim()}");
+        if (!string.IsNullOrWhiteSpace(created)) sb.AppendLine($"created:{created.Trim()}");
+        sb.AppendLine($"algorithm:{InferIdentityAlgorithm(keyBase64)}");
+        sb.AppendLine($"fingerprint:{fingerprint.Trim()}");
+        sb.AppendLine();
+        sb.AppendLine("key:");
+        sb.AppendLine(FormatBase64ForDisplay(Convert.FromBase64String(keyBase64), 64));
+        sb.AppendLine("-----END OBSIDIANQ PUBLIC IDENTITY-----");
+        return sb.ToString();
+    }
+
+    private async Task CopyMyPublicIdentityAsync()
+    {
+        try
+        {
+            string? pubKey = ResolvePreferredPublicKey();
+            if (string.IsNullOrWhiteSpace(pubKey))
+            {
+                ShowError("No local public key was found for identity export.");
+                return;
+            }
+
+            byte[] raw = File.ReadAllBytes(pubKey);
+            string keyBase64 = Convert.ToBase64String(raw);
+            string? fingerprint = await ComputeFingerprintAsync(pubKey);
+            if (string.IsNullOrWhiteSpace(fingerprint))
+            {
+                ShowError("Unable to calculate fingerprint for the local public key.");
+                return;
+            }
+
+            var profile = LoadLocalIdentityProfile();
+            string doc = BuildPublicIdentityDocument(
+                keyBase64,
+                fingerprint,
+                profile.Name,
+                profile.Email,
+                profile.Device,
+                DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"));
+            Clipboard.SetText(doc);
+            ShowInfo("Public identity copied to clipboard.");
+        }
+        catch (Exception ex)
+        {
+            ShowError(ex.Message);
+        }
+    }
+
+    private static void OpenLauncher()
+    {
+        string launcherPath = ResolveLauncherPath();
+        Process.Start(new ProcessStartInfo(launcherPath) { UseShellExecute = true });
+    }
+
+    private void ShowInfo(string text)
+        => _notifyIcon.ShowBalloonTip(3000, "ObsidianQ Clipboard Helper", text, ToolTipIcon.Info);
+
+    private void ShowError(string text)
+        => _notifyIcon.ShowBalloonTip(4000, "ObsidianQ Clipboard Helper", text, ToolTipIcon.Error);
+}
+
+internal sealed class PasswordPromptForm : Form
+{
+    private readonly TextBox _txtPassword;
+    private readonly TextBox? _txtConfirm;
+    public string Password => _txtPassword.Text;
+
+    public PasswordPromptForm(string title, bool confirm)
+    {
+        Text = title;
+        StartPosition = FormStartPosition.CenterScreen;
+        FormBorderStyle = FormBorderStyle.FixedDialog;
+        MaximizeBox = false;
+        MinimizeBox = false;
+        ShowInTaskbar = false;
+        ClientSize = new Size(420, confirm ? 158 : 126);
+        BackColor = Theme.Bg;
+        ForeColor = Theme.TextMain;
+        Font = Theme.SafeMono(9f);
+
+        var root = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = confirm ? 5 : 4,
+            Padding = new Padding(12),
+            BackColor = Theme.Bg,
+        };
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
+        if (confirm)
+        {
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+        }
+        else
+        {
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+        }
+
+        var lbl = new Label
+        {
+            Text = confirm ? "Enter a password for clipboard encryption:" : "Enter the password to decrypt clipboard text:",
+            Dock = DockStyle.Fill,
+            TextAlign = ContentAlignment.MiddleLeft,
+            ForeColor = Theme.TextMain,
+            BackColor = Theme.Bg,
+        };
+        _txtPassword = new TextBox
+        {
+            Dock = DockStyle.Fill,
+            UseSystemPasswordChar = true,
+            BackColor = Theme.Surface,
+            ForeColor = Theme.Accent,
+            BorderStyle = BorderStyle.FixedSingle,
+        };
+        root.Controls.Add(lbl, 0, 0);
+        root.Controls.Add(_txtPassword, 0, 1);
+
+        if (confirm)
+        {
+            var lblConfirm = new Label
+            {
+                Text = "Confirm password:",
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+                ForeColor = Theme.TextMain,
+                BackColor = Theme.Bg,
+            };
+            _txtConfirm = new TextBox
+            {
+                Dock = DockStyle.Fill,
+                UseSystemPasswordChar = true,
+                BackColor = Theme.Surface,
+                ForeColor = Theme.Accent,
+                BorderStyle = BorderStyle.FixedSingle,
+            };
+            root.Controls.Add(lblConfirm, 0, 2);
+            root.Controls.Add(_txtConfirm, 0, 3);
+        }
+
+        var btnRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = Theme.Bg };
+        btnRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        btnRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        var btnCancel = new NeonButton { Text = "CANCEL", Dock = DockStyle.Fill, Margin = new Padding(0, 0, 4, 0) };
+        var btnApply = new NeonButton { Text = confirm ? "ENCRYPT" : "DECRYPT", Dock = DockStyle.Fill, Margin = new Padding(4, 0, 0, 0) };
+        btnCancel.Click += (_, _) => { DialogResult = DialogResult.Cancel; Close(); };
+        btnApply.Click += (_, _) =>
+        {
+            if (string.IsNullOrEmpty(_txtPassword.Text))
+            {
+                MessageBox.Show(this, "Password is required.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            if (_txtConfirm != null && !string.Equals(_txtPassword.Text, _txtConfirm.Text, StringComparison.Ordinal))
+            {
+                MessageBox.Show(this, "Passwords do not match.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            DialogResult = DialogResult.OK;
+            Close();
+        };
+        btnRow.Controls.Add(btnCancel, 0, 0);
+        btnRow.Controls.Add(btnApply, 1, 0);
+        root.Controls.Add(btnRow, 0, confirm ? 4 : 3);
+        Controls.Add(root);
+    }
+}
+
+internal sealed class NamePromptForm : Form
+{
+    private readonly TextBox _txtName;
+    public string ContactName => _txtName.Text.Trim();
+
+    public NamePromptForm()
+    {
+        Text = "Import Contact From Clipboard";
+        StartPosition = FormStartPosition.CenterScreen;
+        FormBorderStyle = FormBorderStyle.FixedDialog;
+        MaximizeBox = false;
+        MinimizeBox = false;
+        ShowInTaskbar = false;
+        ClientSize = new Size(420, 126);
+        BackColor = Theme.Bg;
+        ForeColor = Theme.TextMain;
+        Font = Theme.SafeMono(9f);
+
+        var root = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 4,
+            Padding = new Padding(12),
+            BackColor = Theme.Bg,
+        };
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+
+        var lbl = new Label
+        {
+            Text = "Optional contact display name:",
+            Dock = DockStyle.Fill,
+            TextAlign = ContentAlignment.MiddleLeft,
+            ForeColor = Theme.TextMain,
+            BackColor = Theme.Bg,
+        };
+        _txtName = new TextBox
+        {
+            Dock = DockStyle.Fill,
+            BackColor = Theme.Surface,
+            ForeColor = Theme.TextMain,
+            BorderStyle = BorderStyle.FixedSingle,
+        };
+        var btnRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = Theme.Bg };
+        btnRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        btnRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        var btnCancel = new NeonButton { Text = "CANCEL", Dock = DockStyle.Fill, Margin = new Padding(0, 0, 4, 0) };
+        var btnImport = new NeonButton { Text = "IMPORT", Dock = DockStyle.Fill, Margin = new Padding(4, 0, 0, 0) };
+        btnCancel.Click += (_, _) => { DialogResult = DialogResult.Cancel; Close(); };
+        btnImport.Click += (_, _) => { DialogResult = DialogResult.OK; Close(); };
+        btnRow.Controls.Add(btnCancel, 0, 0);
+        btnRow.Controls.Add(btnImport, 1, 0);
+
+        root.Controls.Add(lbl, 0, 0);
+        root.Controls.Add(_txtName, 0, 1);
+        root.Controls.Add(new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg }, 0, 2);
+        root.Controls.Add(btnRow, 0, 3);
+        Controls.Add(root);
+    }
+}
+
+internal sealed class FirstRunSetupForm : Form
+{
+    private readonly CheckBox _chkShell;
+    private readonly CheckBox _chkKeypair;
+    private readonly CheckBox _chkClipboard;
+    private readonly CheckBox _chkClipboardStartup;
+    private readonly CheckBox _chkClipboardAutoOpen;
+
+    public bool InstallShell => _chkShell.Checked;
+    public bool SetupKeypair => _chkKeypair.Checked;
+    public bool EnableClipboardHelper => _chkClipboard.Checked;
+    public bool StartClipboardWithWindows => _chkClipboard.Checked && _chkClipboardStartup.Checked;
+    public bool AutoOpenClipboardWithLauncher => _chkClipboard.Checked && _chkClipboardAutoOpen.Checked;
+
+    public FirstRunSetupForm()
+    {
+        Text = "Welcome to ObsidianQ";
+        StartPosition = FormStartPosition.CenterParent;
+        FormBorderStyle = FormBorderStyle.FixedDialog;
+        MaximizeBox = false;
+        MinimizeBox = false;
+        ShowInTaskbar = false;
+        ClientSize = new Size(560, 320);
+        BackColor = Theme.Bg;
+        ForeColor = Theme.TextMain;
+        Font = Theme.SafeMono(9f);
+
+        var root = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 4,
+            Padding = new Padding(16),
+            BackColor = Theme.Bg,
+        };
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+
+        var header = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, BackColor = Theme.Bg };
+        header.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
+        header.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
+        var lblTitle = new Label
+        {
+            Text = "FIRST-RUN SETUP",
+            Dock = DockStyle.Fill,
+            ForeColor = Theme.Accent,
+            BackColor = Theme.Bg,
+            Font = Theme.SafeMono(10f),
+            TextAlign = ContentAlignment.MiddleLeft,
+        };
+        var lblBody = new Label
+        {
+            Text = "Recommended setup for secure contacts, Explorer integration, and clipboard tools. Uncheck anything you do not want.",
+            Dock = DockStyle.Fill,
+            ForeColor = Theme.TextMain,
+            BackColor = Theme.Bg,
+            TextAlign = ContentAlignment.MiddleLeft,
+        };
+        header.Controls.Add(lblTitle, 0, 0);
+        header.Controls.Add(lblBody, 0, 1);
+
+        var options = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 6,
+            BackColor = Theme.Surface,
+            Padding = new Padding(12, 10, 12, 10),
+            Margin = new Padding(0),
+        };
+        options.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
+        options.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
+        options.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
+        options.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
+        options.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
+        options.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+        _chkShell = new CheckBox
+        {
+            Text = "Install Explorer integration and file associations",
+            Checked = true,
+            AutoSize = true,
+            ForeColor = Theme.TextMain,
+            BackColor = Theme.Surface,
+            Font = Theme.SafeMono(8.5f),
+            Margin = new Padding(0, 2, 0, 0),
+        };
+        _chkKeypair = new CheckBox
+        {
+            Text = "Set up secure contacts keypair",
+            Checked = true,
+            AutoSize = true,
+            ForeColor = Theme.TextMain,
+            BackColor = Theme.Surface,
+            Font = Theme.SafeMono(8.5f),
+            Margin = new Padding(0, 2, 0, 0),
+        };
+        _chkClipboard = new CheckBox
+        {
+            Text = "Enable clipboard helper",
+            Checked = true,
+            AutoSize = true,
+            ForeColor = Theme.TextMain,
+            BackColor = Theme.Surface,
+            Font = Theme.SafeMono(8.5f),
+            Margin = new Padding(0, 2, 0, 0),
+        };
+        _chkClipboardStartup = new CheckBox
+        {
+            Text = "Start clipboard helper with Windows",
+            Checked = true,
+            AutoSize = true,
+            ForeColor = Theme.TextDim,
+            BackColor = Theme.Surface,
+            Font = Theme.SafeMono(8.5f),
+            Margin = new Padding(22, 0, 0, 0),
+        };
+        _chkClipboardAutoOpen = new CheckBox
+        {
+            Text = "Open clipboard helper when launcher starts",
+            Checked = true,
+            AutoSize = true,
+            ForeColor = Theme.TextDim,
+            BackColor = Theme.Surface,
+            Font = Theme.SafeMono(8.5f),
+            Margin = new Padding(22, 0, 0, 0),
+        };
+        var lblNote = new Label
+        {
+            Text = "You can change any of these later in Settings.",
+            Dock = DockStyle.Fill,
+            ForeColor = Theme.TextDim,
+            BackColor = Theme.Surface,
+            TextAlign = ContentAlignment.TopLeft,
+        };
+
+        void UpdateClipboardChildren()
+        {
+            bool enabled = _chkClipboard.Checked;
+            _chkClipboardStartup.Enabled = enabled;
+            _chkClipboardAutoOpen.Enabled = enabled;
+            _chkClipboardStartup.ForeColor = enabled ? Theme.TextMain : Theme.TextDim;
+            _chkClipboardAutoOpen.ForeColor = enabled ? Theme.TextMain : Theme.TextDim;
+        }
+        _chkClipboard.CheckedChanged += (_, _) => UpdateClipboardChildren();
+        UpdateClipboardChildren();
+
+        options.Controls.Add(_chkShell, 0, 0);
+        options.Controls.Add(_chkKeypair, 0, 1);
+        options.Controls.Add(_chkClipboard, 0, 2);
+        options.Controls.Add(_chkClipboardStartup, 0, 3);
+        options.Controls.Add(_chkClipboardAutoOpen, 0, 4);
+        options.Controls.Add(lblNote, 0, 5);
+
+        var actionsHint = new Label
+        {
+            Text = "Apply setup now, or skip and configure later.",
+            Dock = DockStyle.Fill,
+            ForeColor = Theme.TextDim,
+            BackColor = Theme.Bg,
+            TextAlign = ContentAlignment.MiddleLeft,
+        };
+
+        var btnRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1, BackColor = Theme.Bg };
+        btnRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 40));
+        btnRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 35));
+        btnRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
+        var btnApply = new NeonButton { Text = "APPLY SETUP", Dock = DockStyle.Fill, Margin = new Padding(0, 0, 4, 0) };
+        var btnSkip = new NeonButton { Text = "SKIP FOR NOW", Dock = DockStyle.Fill, Margin = new Padding(4, 0, 4, 0) };
+        var btnCancel = new NeonButton { Text = "CANCEL", Dock = DockStyle.Fill, Margin = new Padding(4, 0, 0, 0) };
+        btnApply.Click += (_, _) => { DialogResult = DialogResult.OK; Close(); };
+        btnSkip.Click += (_, _) => { DialogResult = DialogResult.No; Close(); };
+        btnCancel.Click += (_, _) => { DialogResult = DialogResult.Cancel; Close(); };
+        btnRow.Controls.Add(btnApply, 0, 0);
+        btnRow.Controls.Add(btnSkip, 1, 0);
+        btnRow.Controls.Add(btnCancel, 2, 0);
+
+        root.Controls.Add(header, 0, 0);
+        root.Controls.Add(options, 0, 1);
+        root.Controls.Add(actionsHint, 0, 2);
+        root.Controls.Add(btnRow, 0, 3);
+        Controls.Add(root);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Main Form
 // ---------------------------------------------------------------------------
@@ -2179,7 +3114,14 @@ class MainForm : Form
     private const string LauncherPrefsKey = @"Software\ObsidianQ\Launcher";
     private const string SkipShellPromptValue = "SkipShellSetupPrompt";
     private const string SkipKeygenPromptValue = "SkipKeygenRiskPrompt";
+    private const string FirstRunSetupPromptedValue = "FirstRunSetupPrompted";
     private const string FirstRunKeypairPromptedValue = "FirstRunKeypairPrompted";
+    private const string FirstRunClipboardPromptedValue = "FirstRunClipboardPrompted";
+    private const string ClipboardUpgradeNudgePromptedValue = "ClipboardUpgradeNudgePrompted";
+    private const string ClipboardHelperStartupValue = "ClipboardHelperStartup";
+    private const string ClipboardHelperAutoLaunchValue = "ClipboardHelperAutoLaunch";
+    private const string ClipboardHelperRunValue = "ObsidianQClipboardAgent";
+    private const string ClipboardAgentMutexName = @"Local\ObsidianQ.Launcher.ClipboardAgent";
     // -----------------------------------------------------------------------
     // FILE TAB controls
     // -----------------------------------------------------------------------
@@ -2915,23 +3857,36 @@ class MainForm : Form
             Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 1,
             BackColor = Theme.Bg, Margin = new Padding(0),
         };
-        btnRowText.ColumnCount = 5;
-        for (int i = 0; i < 4; i++) btnRowText.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
-        btnRowText.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130));
+        btnRowText.ColumnCount = 4;
+        for (int i = 0; i < 3; i++) btnRowText.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.3333f));
+        btnRowText.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
         btnRowText.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        var btnPaste = new NeonButton { Text = "PASTE",       Dock = DockStyle.Fill, Margin = new Padding(0, 2, 3, 2) };
+        var btnClipboard = new NeonButton { Text = "CLIPBOARD", Dock = DockStyle.Fill, Margin = new Padding(0, 2, 3, 2) };
         _btnTextEncrypt = new NeonButton { Text = "ENCRYPT",  Dock = DockStyle.Fill, Margin = new Padding(0, 2, 3, 2) };
         _btnTextDecrypt = new NeonButton { Text = "DECRYPT",  Dock = DockStyle.Fill, Margin = new Padding(0, 2, 3, 2) };
-        var btnCopy  = new NeonButton { Text = "COPY OUTPUT", Dock = DockStyle.Fill, Margin = new Padding(0, 2, 0, 2) };
-        btnPaste.Click += (_, _) => { _txtInput.Text = Clipboard.GetText(); };
+        var textClipboardMenu = new ContextMenuStrip
+        {
+            BackColor = Theme.Surface,
+            ForeColor = Theme.TextMain,
+            ShowImageMargin = false,
+            ShowCheckMargin = false,
+        };
+        var miPasteClipboard = new ToolStripMenuItem("Paste Clipboard");
+        var miEncryptClipboard = new ToolStripMenuItem("Encrypt Clipboard");
+        var miDecryptClipboard = new ToolStripMenuItem("Decrypt Clipboard");
+        var miCopyOutput = new ToolStripMenuItem("Copy Output");
+        textClipboardMenu.Items.AddRange([miPasteClipboard, miEncryptClipboard, miDecryptClipboard, miCopyOutput]);
+        miPasteClipboard.Click += (_, _) => { _txtInput.Text = Clipboard.GetText(); };
         _btnTextEncrypt.Click += BtnTextEncrypt_Click;
         _btnTextDecrypt.Click += BtnTextDecrypt_Click;
-        btnCopy.Click  += (_, _) => { if (!string.IsNullOrEmpty(_txtOutput.Text)) Clipboard.SetText(_txtOutput.Text); };
-        btnRowText.Controls.Add(btnPaste, 0, 0);
+        miEncryptClipboard.Click += BtnTextEncryptClipboard_Click;
+        miDecryptClipboard.Click += BtnTextDecryptClipboard_Click;
+        miCopyOutput.Click  += (_, _) => { if (!string.IsNullOrEmpty(_txtOutput.Text)) Clipboard.SetText(_txtOutput.Text); };
+        btnClipboard.Click += (_, _) => textClipboardMenu.Show(btnClipboard, 0, btnClipboard.Height);
+        btnRowText.Controls.Add(btnClipboard, 0, 0);
         btnRowText.Controls.Add(_btnTextEncrypt, 1, 0);
         btnRowText.Controls.Add(_btnTextDecrypt, 2, 0);
-        btnRowText.Controls.Add(btnCopy,  3, 0);
-        btnRowText.Controls.Add(_chkTextForceActions, 4, 0);
+        btnRowText.Controls.Add(_chkTextForceActions, 3, 0);
         outerText.Controls.Add(btnRowText, 0, 4);
 
         var outputContainer = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg };
@@ -4440,6 +5395,31 @@ class MainForm : Form
             }
         }
 
+        FileSystemWatcher? kx2RecipientsWatcher = null;
+        try
+        {
+            string watcherDir = Path.GetDirectoryName(keyExchange2StorePath) ?? LocalKeysDir;
+            Directory.CreateDirectory(watcherDir);
+            kx2RecipientsWatcher = new FileSystemWatcher(watcherDir, Path.GetFileName(keyExchange2StorePath))
+            {
+                NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.CreationTime,
+                EnableRaisingEvents = true,
+            };
+            void ReloadRecipientsFromWatcher()
+            {
+                if (IsDisposed) return;
+                BeginInvoke(new Action(() =>
+                {
+                    if (IsDisposed) return;
+                    Kx2LoadRecipients();
+                }));
+            }
+            kx2RecipientsWatcher.Changed += (_, _) => ReloadRecipientsFromWatcher();
+            kx2RecipientsWatcher.Created += (_, _) => ReloadRecipientsFromWatcher();
+            kx2RecipientsWatcher.Renamed += (_, _) => ReloadRecipientsFromWatcher();
+        }
+        catch { /* best effort */ }
+
         void Kx2LoadIdentityProfile()
         {
             try
@@ -4475,6 +5455,7 @@ class MainForm : Form
         var btnKx2ExportMyPub = new NeonButton { Text = "EXPORT PUBLIC IDENTITY", Dock = DockStyle.Fill, Margin = new Padding(3, 2, 0, 2) };
         var btnKx2ToggleFullKey = new NeonButton { Text = "VIEW RAW KEY", Dock = DockStyle.Fill, Margin = new Padding(0, 2, 0, 2), MinimumSize = new Size(0, 30), MaximumSize = new Size(int.MaxValue, 30) };
         var btnKx2FocusAdd = new NeonButton { Text = "+ ADD CONTACT", Dock = DockStyle.Fill, Margin = new Padding(0, 2, 0, 2) };
+        var btnKx2ImportClipboard = new NeonButton { Text = "IMPORT CLIPBOARD", Dock = DockStyle.Fill, Margin = new Padding(4, 2, 0, 2) };
         btnKx2CopyMyPub.Click += (_, _) =>
         {
             if (string.IsNullOrWhiteSpace(kx2MyPubRaw) || string.IsNullOrWhiteSpace(kx2MyFingerprintRaw))
@@ -4853,6 +5834,16 @@ class MainForm : Form
         _openAddContactDialog = ShowAddContactDialog;
 
         btnKx2FocusAdd.Click += (_, _) => ShowAddContactDialog();
+        btnKx2ImportClipboard.Click += (_, _) =>
+        {
+            string text = Clipboard.GetText();
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                Kx2Status("Clipboard does not contain a public identity or key.", true);
+                return;
+            }
+            ShowAddContactDialog(text, autoValidate: true);
+        };
 
         btnKx2CopyFp.Click += (_, _) =>
         {
@@ -5069,7 +6060,12 @@ class MainForm : Form
         var lblRecipients = MakeLabel("TRUSTED CONTACTS", 9f, bold: true); lblRecipients.Dock = DockStyle.Fill; lblRecipients.TextAlign = ContentAlignment.MiddleLeft; lblRecipients.ForeColor = Theme.Accent;
         recipientCard.Controls.Add(lblRecipients, 0, 0);
         recipientCard.Controls.Add(lvKx2Recipients, 0, 1);
-        recipientCard.Controls.Add(btnKx2FocusAdd, 0, 2);
+        var recipientButtons = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = Theme.Surface, Margin = new Padding(0) };
+        recipientButtons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        recipientButtons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        recipientButtons.Controls.Add(btnKx2FocusAdd, 0, 0);
+        recipientButtons.Controls.Add(btnKx2ImportClipboard, 1, 0);
+        recipientCard.Controls.Add(recipientButtons, 0, 2);
 
         topGrid.Controls.Add(myKeyCard, 0, 0);
         topGrid.Controls.Add(recipientCard, 1, 0);
@@ -5187,13 +6183,14 @@ class MainForm : Form
         var btnSettingsGenerate = new NeonButton { Text = "GENERATE NEW KEYPAIR", Dock = DockStyle.Fill, Margin = new Padding(0, 2, 0, 2) };
         var btnSettingsBackup = new NeonButton { Text = "BACKUP LOCAL KEYPAIR", Dock = DockStyle.Fill, Margin = new Padding(0, 2, 4, 2) };
         var btnSettingsRestore = new NeonButton { Text = "RESTORE LOCAL KEYPAIR", Dock = DockStyle.Fill, Margin = new Padding(4, 2, 0, 2) };
-        btnSettingsGenerate.Click += async (_, _) =>
+
+        async Task<bool> GenerateLocalKeypairAsync(bool requireRiskPrompt)
         {
-            if (!ConfirmKeyGenerationRisk()) return;
+            if (requireRiskPrompt && !ConfirmKeyGenerationRisk()) return false;
             if (!File.Exists(ExePath))
             {
                 MessageBox.Show($"obsidianq.exe not found at:\n{ExePath}", "Key Generation", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return;
+                return false;
             }
             btnSettingsGenerate.Enabled = false;
             try
@@ -5206,7 +6203,7 @@ class MainForm : Form
                 {
                     string err = string.IsNullOrWhiteSpace(stderr) ? $"exit {exitCode}" : stderr.Trim();
                     MessageBox.Show($"Key generation failed: {err}", "Key Generation", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    return;
+                    return false;
                 }
 
                 txtSettingsKeys.Text =
@@ -5219,12 +6216,14 @@ class MainForm : Form
                 TryAutoLoadVaultKeyPath(force: true);
                 RefreshMyPublicKeyText();
                 await Kx2RefreshMyPublicKeyAsync();
+                return true;
             }
             finally
             {
                 btnSettingsGenerate.Enabled = true;
             }
-        };
+        }
+        btnSettingsGenerate.Click += async (_, _) => { await GenerateLocalKeypairAsync(requireRiskPrompt: true); };
         btnSettingsBackup.Click += (_, _) =>
         {
             try
@@ -5378,32 +6377,94 @@ class MainForm : Form
         settingsKeypairOpsRow.Controls.Add(btnSettingsBackup, 0, 0);
         settingsKeypairOpsRow.Controls.Add(btnSettingsRestore, 1, 0);
 
-        void PromptFirstRunKeypairSetupIfNeeded()
+        void AutoLaunchClipboardHelperIfEnabled()
         {
-            if (GetFirstRunKeypairPrompted()) return;
-            SetFirstRunKeypairPrompted(true); // one-time first-run prompt
+            if (!GetClipboardHelperAutoLaunchEnabled()) return;
+            if (IsClipboardHelperRunning()) return;
+            if (!TryLaunchClipboardHelper(out _))
+            {
+                // Best effort only; don't interrupt launcher startup.
+            }
+        }
 
-            if (TryResolveLatestLocalKeypair(out _, out _, out _)) return;
+        async Task ShowFirstRunSetupIfNeededAsync()
+        {
+            if (GetFirstRunSetupPrompted()) return;
+            if (preloadPath != null || createVaultOnStart || createPackageOnStart || encryptFolderOnStart) return;
+            if (ShouldSuppressFirstRunSetupForExistingInstall())
+            {
+                SetFirstRunSetupPrompted(true);
+                return;
+            }
 
+            using var dlg = new FirstRunSetupForm();
+            var result = dlg.ShowDialog(this);
+            if (result == DialogResult.Cancel) return;
+
+            SetFirstRunSetupPrompted(true);
+            SetFirstRunKeypairPrompted(true);
+            SetFirstRunClipboardPrompted(true);
+
+            if (result != DialogResult.OK) return;
+
+            if (dlg.InstallShell)
+            {
+                try
+                {
+                    InstallShellAndAssociations();
+                    SetSkipShellSetupPrompt(true);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(
+                        this,
+                        $"Failed to install shell integration:\n{ex.Message}",
+                        "Install failed",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Error);
+                }
+            }
+
+            if (dlg.SetupKeypair && !TryResolveLatestLocalKeypair(out _, out _, out _))
+            {
+                _tabs.SelectedIndex = 7; // Settings
+                await GenerateLocalKeypairAsync(requireRiskPrompt: false);
+            }
+
+            if (dlg.EnableClipboardHelper)
+            {
+                SetClipboardHelperStartupEnabled(dlg.StartClipboardWithWindows);
+                SetClipboardHelperAutoLaunchEnabled(dlg.AutoOpenClipboardWithLauncher);
+                if (!IsClipboardHelperRunning())
+                {
+                    if (!TryLaunchClipboardHelper(out var launchErr) && !string.IsNullOrWhiteSpace(launchErr))
+                    {
+                        MessageBox.Show(this, launchErr, "Clipboard Helper", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    }
+                }
+            }
+        }
+
+        void ShowClipboardUpgradeNudgeIfNeeded()
+        {
+            if (!ShouldSuppressFirstRunSetupForExistingInstall()) return;
+            if (GetClipboardUpgradeNudgePrompted()) return;
+            if (GetClipboardHelperStartupEnabled() || GetClipboardHelperAutoLaunchEnabled() || IsClipboardHelperRunning()) return;
+
+            SetClipboardUpgradeNudgePrompted(true);
             var result = MessageBox.Show(
                 this,
-                "No local keypair was found for Secure Contacts.\n\n" +
-                "Yes = Generate a new local keypair now\n" +
-                "No = Restore a keypair backup\n" +
-                "Cancel = Continue for now",
-                "Set Up Local Keypair",
-                MessageBoxButtons.YesNoCancel,
+                "New in this version: ObsidianQ now includes a built-in clipboard helper for quick tray-based encrypt/decrypt.\n\nEnable and launch it now?\n\nYou can change this later in Settings.",
+                "Clipboard Helper Available",
+                MessageBoxButtons.YesNo,
                 MessageBoxIcon.Information,
                 MessageBoxDefaultButton.Button1);
-            if (result == DialogResult.Yes)
+            if (result != DialogResult.Yes) return;
+
+            SetClipboardHelperAutoLaunchEnabled(true);
+            if (!TryLaunchClipboardHelper(out var launchErr) && !string.IsNullOrWhiteSpace(launchErr))
             {
-                _tabs.SelectedIndex = 6; // Settings
-                btnSettingsGenerate.PerformClick();
-            }
-            else if (result == DialogResult.No)
-            {
-                _tabs.SelectedIndex = 6; // Settings
-                btnSettingsRestore.PerformClick();
+                MessageBox.Show(this, launchErr, "Clipboard Helper", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
@@ -5481,11 +6542,94 @@ class MainForm : Form
         settingsIntegrationRow.Controls.Add(btnSettingsInstallIntegration, 0, 0);
         settingsIntegrationRow.Controls.Add(btnSettingsUninstallIntegration, 1, 0);
 
+        var btnSettingsOpenClipboardHelper = new NeonButton
+        {
+            Text = "OPEN CLIPBOARD HELPER",
+            Dock = DockStyle.Fill,
+            Margin = new Padding(0, 2, 0, 2)
+        };
+        btnSettingsOpenClipboardHelper.Click += (_, _) =>
+        {
+            if (TryLaunchClipboardHelper(out var launchErr))
+            {
+                txtSettingsKeys.Text =
+                    "Clipboard helper launched." + Environment.NewLine + Environment.NewLine +
+                    "Use the system tray icon for quick clipboard encrypt/decrypt and contact actions.";
+            }
+            else
+            {
+                MessageBox.Show(
+                    this,
+                    launchErr ?? "Clipboard helper could not be launched.",
+                    "Clipboard Helper",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+            }
+        };
+
+        var chkSettingsClipboardStartup = new CheckBox
+        {
+            Text = "Start clipboard helper with Windows",
+            AutoSize = true,
+            Checked = GetClipboardHelperStartupEnabled(),
+            ForeColor = Theme.TextMain,
+            BackColor = Theme.Bg,
+            Font = Theme.SafeMono(8.5f),
+            Margin = new Padding(0, 8, 0, 0),
+        };
+        var chkSettingsClipboardAutoOpen = new CheckBox
+        {
+            Text = "Open clipboard helper when ObsidianQ.Launcher starts",
+            AutoSize = true,
+            Checked = GetClipboardHelperAutoLaunchEnabled(),
+            ForeColor = Theme.TextMain,
+            BackColor = Theme.Bg,
+            Font = Theme.SafeMono(8.5f),
+            Margin = new Padding(0, 6, 0, 0),
+        };
+        var lblSettingsClipboardHint = MakeLabel(
+            "Launch the built-in tray helper for clipboard actions without keeping the full launcher window open.",
+            8.0f);
+        lblSettingsClipboardHint.ForeColor = Theme.TextDim;
+        lblSettingsClipboardHint.AutoSize = false;
+        lblSettingsClipboardHint.Dock = DockStyle.Fill;
+        lblSettingsClipboardHint.TextAlign = ContentAlignment.TopLeft;
+        chkSettingsClipboardStartup.CheckedChanged += (_, _) =>
+        {
+            SetClipboardHelperStartupEnabled(chkSettingsClipboardStartup.Checked);
+            txtSettingsKeys.Text =
+                $"Clipboard helper startup preference: {(chkSettingsClipboardStartup.Checked ? "enabled" : "disabled")}{Environment.NewLine}{Environment.NewLine}" +
+                "Use OPEN CLIPBOARD HELPER to launch the tray helper now.";
+        };
+        chkSettingsClipboardAutoOpen.CheckedChanged += (_, _) =>
+        {
+            SetClipboardHelperAutoLaunchEnabled(chkSettingsClipboardAutoOpen.Checked);
+            txtSettingsKeys.Text =
+                $"Clipboard helper auto-open: {(chkSettingsClipboardAutoOpen.Checked ? "enabled" : "disabled")}{Environment.NewLine}{Environment.NewLine}" +
+                "Use OPEN CLIPBOARD HELPER to launch the tray helper now.";
+        };
+        var settingsClipboardRow = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 4,
+            BackColor = Theme.Bg,
+            Margin = new Padding(0),
+        };
+        settingsClipboardRow.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+        settingsClipboardRow.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
+        settingsClipboardRow.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
+        settingsClipboardRow.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        settingsClipboardRow.Controls.Add(btnSettingsOpenClipboardHelper, 0, 0);
+        settingsClipboardRow.Controls.Add(chkSettingsClipboardStartup, 0, 1);
+        settingsClipboardRow.Controls.Add(chkSettingsClipboardAutoOpen, 0, 2);
+        settingsClipboardRow.Controls.Add(lblSettingsClipboardHint, 0, 3);
+
         var outerSettings = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            RowCount = 5,
+            RowCount = 6,
             Padding = new Padding(16),
             BackColor = Theme.Bg,
         };
@@ -5493,6 +6637,7 @@ class MainForm : Form
         outerSettings.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
         outerSettings.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
         outerSettings.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+        outerSettings.RowStyles.Add(new RowStyle(SizeType.Absolute, 132));
         outerSettings.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         outerSettings.Controls.Add(MakeTabHeader(
             "SETTINGS",
@@ -5500,7 +6645,8 @@ class MainForm : Form
         outerSettings.Controls.Add(btnSettingsGenerate, 0, 1);
         outerSettings.Controls.Add(settingsKeypairOpsRow, 0, 2);
         outerSettings.Controls.Add(settingsIntegrationRow, 0, 3);
-        outerSettings.Controls.Add(txtSettingsKeys, 0, 4);
+        outerSettings.Controls.Add(settingsClipboardRow, 0, 4);
+        outerSettings.Controls.Add(txtSettingsKeys, 0, 5);
 
         // ==================================================================
         // ABOUT TAB - product overview and usage guide
@@ -7484,11 +8630,11 @@ class MainForm : Form
         if (!File.Exists(ExePath))
             Load += (_, _) => WarnMissingCli();
 
-        Shown += (_, _) =>
+        Shown += async (_, _) =>
         {
-            PromptShellSetupIfNeeded();
-            if (preloadPath == null && !createVaultOnStart && !createPackageOnStart && !encryptFolderOnStart)
-                PromptFirstRunKeypairSetupIfNeeded();
+            await ShowFirstRunSetupIfNeededAsync();
+            ShowClipboardUpgradeNudgeIfNeeded();
+            AutoLaunchClipboardHelperIfEnabled();
         };
         UpdateTextInputActionHints();
         UpdateVaultUiState();
@@ -7689,6 +8835,68 @@ class MainForm : Form
         key?.SetValue(SkipKeygenPromptValue, skip ? 1 : 0, RegistryValueKind.DWord);
     }
 
+    private static bool GetFirstRunSetupPrompted()
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(LauncherPrefsKey);
+        return (key?.GetValue(FirstRunSetupPromptedValue) as int?) == 1;
+    }
+
+    private static void SetFirstRunSetupPrompted(bool prompted)
+    {
+        using var key = Registry.CurrentUser.CreateSubKey(LauncherPrefsKey, true);
+        key?.SetValue(FirstRunSetupPromptedValue, prompted ? 1 : 0, RegistryValueKind.DWord);
+    }
+
+    private static bool ShouldSuppressFirstRunSetupForExistingInstall()
+    {
+        if (GetSkipShellSetupPrompt()
+            || GetFirstRunKeypairPrompted()
+            || GetFirstRunClipboardPrompted()
+            || GetClipboardHelperStartupEnabled()
+            || GetClipboardHelperAutoLaunchEnabled()
+            || HasShellMenuEntries()
+            || HasVaultAssociation()
+            || HasPublicIdentityAssociation()
+            || HasVaultNewMenuEntry())
+            return true;
+
+        try
+        {
+            string localRoot = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "ObsidianQ");
+            if (!Directory.Exists(localRoot)) return false;
+
+            string[] signals =
+            [
+                Path.Combine(localRoot, "keys"),
+                Path.Combine(localRoot, "trusted_recipients_v1.tsv"),
+                Path.Combine(localRoot, "identity_profile_v1.tsv"),
+                Path.Combine(localRoot, "public_identity_meta_v1.tsv"),
+                Path.Combine(localRoot, "launcher_prefs.json"),
+            ];
+
+            foreach (string signal in signals)
+            {
+                if (Directory.Exists(signal))
+                {
+                    if (Directory.EnumerateFileSystemEntries(signal).Any())
+                        return true;
+                }
+                else if (File.Exists(signal))
+                {
+                    return true;
+                }
+            }
+        }
+        catch
+        {
+            // best effort
+        }
+
+        return false;
+    }
+
     private static bool GetFirstRunKeypairPrompted()
     {
         using var key = Registry.CurrentUser.OpenSubKey(LauncherPrefsKey);
@@ -7699,6 +8907,111 @@ class MainForm : Form
     {
         using var key = Registry.CurrentUser.CreateSubKey(LauncherPrefsKey, true);
         key?.SetValue(FirstRunKeypairPromptedValue, prompted ? 1 : 0, RegistryValueKind.DWord);
+    }
+
+    private static bool GetFirstRunClipboardPrompted()
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(LauncherPrefsKey);
+        return (key?.GetValue(FirstRunClipboardPromptedValue) as int?) == 1;
+    }
+
+    private static void SetFirstRunClipboardPrompted(bool prompted)
+    {
+        using var key = Registry.CurrentUser.CreateSubKey(LauncherPrefsKey, true);
+        key?.SetValue(FirstRunClipboardPromptedValue, prompted ? 1 : 0, RegistryValueKind.DWord);
+    }
+
+    private static bool GetClipboardUpgradeNudgePrompted()
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(LauncherPrefsKey);
+        return (key?.GetValue(ClipboardUpgradeNudgePromptedValue) as int?) == 1;
+    }
+
+    private static void SetClipboardUpgradeNudgePrompted(bool prompted)
+    {
+        using var key = Registry.CurrentUser.CreateSubKey(LauncherPrefsKey, true);
+        key?.SetValue(ClipboardUpgradeNudgePromptedValue, prompted ? 1 : 0, RegistryValueKind.DWord);
+    }
+
+    private static bool GetClipboardHelperStartupEnabled()
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(LauncherPrefsKey);
+        return (key?.GetValue(ClipboardHelperStartupValue) as int?) == 1
+            || (Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run")?.GetValue(ClipboardHelperRunValue) as string) is string existing
+                && !string.IsNullOrWhiteSpace(existing);
+    }
+
+    private static bool GetClipboardHelperAutoLaunchEnabled()
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(LauncherPrefsKey);
+        return (key?.GetValue(ClipboardHelperAutoLaunchValue) as int?) == 1;
+    }
+
+    private static void SetClipboardHelperStartupEnabled(bool enabled)
+    {
+        using var key = Registry.CurrentUser.CreateSubKey(LauncherPrefsKey, true);
+        key?.SetValue(ClipboardHelperStartupValue, enabled ? 1 : 0, RegistryValueKind.DWord);
+        using var runKey = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", true);
+        if (enabled)
+        {
+            string? helperPath = GetClipboardHelperPath();
+            if (!string.IsNullOrWhiteSpace(helperPath))
+                runKey?.SetValue(ClipboardHelperRunValue, $"\"{helperPath}\" --clipboard-agent", RegistryValueKind.String);
+        }
+        else
+        {
+            try { runKey?.DeleteValue(ClipboardHelperRunValue, false); } catch { /* best effort */ }
+        }
+    }
+
+    private static void SetClipboardHelperAutoLaunchEnabled(bool enabled)
+    {
+        using var key = Registry.CurrentUser.CreateSubKey(LauncherPrefsKey, true);
+        key?.SetValue(ClipboardHelperAutoLaunchValue, enabled ? 1 : 0, RegistryValueKind.DWord);
+    }
+
+    private static string? GetClipboardHelperPath()
+    {
+        string candidate = Environment.ProcessPath ?? Application.ExecutablePath;
+        return File.Exists(candidate) ? candidate : null;
+    }
+
+    private static bool IsClipboardHelperRunning()
+    {
+        try
+        {
+            using var _ = Mutex.OpenExisting(ClipboardAgentMutexName);
+            return true;
+        }
+        catch (WaitHandleCannotBeOpenedException)
+        {
+            return false;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool TryLaunchClipboardHelper(out string? error)
+    {
+        error = null;
+        string? helperPath = GetClipboardHelperPath();
+        if (string.IsNullOrWhiteSpace(helperPath))
+        {
+            error = "ObsidianQ.ClipboardAgent.exe was not found next to the launcher.";
+            return false;
+        }
+        try
+        {
+            Process.Start(new ProcessStartInfo(helperPath, "--clipboard-agent") { UseShellExecute = true });
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = $"Failed to launch clipboard helper: {ex.Message}";
+            return false;
+        }
     }
 
     private bool ConfirmKeyGenerationRisk()
@@ -9577,10 +10890,9 @@ class MainForm : Form
         UpdateTextInputActionHints();
     }
 
-    private async void BtnTextEncrypt_Click(object? sender, EventArgs e)
+    private async Task EncryptTextAsync(string plaintext, bool copyResultToClipboard)
     {
         if (!File.Exists(ExePath)) { TextStatus("obsidianq.exe not found.", error: true); return; }
-        string plaintext = _txtInput.Text;
         if (string.IsNullOrEmpty(plaintext)) { TextStatus("Input is empty.", error: true); return; }
         var kind = ClassifyTextInput(plaintext, out var detectedMode);
         if (kind == TextInputKind.Ciphertext)
@@ -9624,6 +10936,7 @@ class MainForm : Form
         { TextStatus("Passwords do not match.", error: true); return; }
         if (isPqc && string.IsNullOrWhiteSpace(_txtPrivkeyText.Text))
         { TextStatus("No public key found - use BROWSE or Settings > Generate New Keypair.", error: true); return; }
+
         List<string>? textRecipientKeys = null;
         if (isPqc)
         {
@@ -9639,8 +10952,6 @@ class MainForm : Form
                 return;
             }
 
-            // Encrypt should use recipient PUBLIC keys. If a private-key-looking path was
-            // entered, try the inferred public counterpart first.
             var normalizedKeys = new List<string>();
             foreach (string k in textRecipientKeys)
             {
@@ -9671,10 +10982,13 @@ class MainForm : Form
             foreach (string key in textRecipientKeys ?? ParseRecipientKeyPaths(_txtPrivkeyText.Text))
                 args.Append($" --pubkey \"{key}\"");
         }
-        else       args.Append(" --password-stdin");
+        else
+        {
+            args.Append(" --password-stdin");
+        }
 
         _shimmer.Start();
-        TextStatus("Encrypting...", error: false);
+        TextStatus(copyResultToClipboard ? "Encrypting clipboard..." : "Encrypting...", error: false);
         try
         {
             var psi = new ProcessStartInfo
@@ -9697,7 +11011,15 @@ class MainForm : Form
             if (proc.ExitCode == 0)
             {
                 _txtOutput.Text = b64.Trim();
-                TextStatus("Encrypted. Copy output or use COPY OUTPUT.", error: false);
+                if (copyResultToClipboard)
+                {
+                    Clipboard.SetText(_txtOutput.Text);
+                    TextStatus("Encrypted and copied to clipboard.", error: false);
+                }
+                else
+                {
+                    TextStatus("Encrypted. Copy output or use COPY OUT.", error: false);
+                }
             }
             else
             {
@@ -9709,10 +11031,9 @@ class MainForm : Form
         finally { _shimmer.Stop(); }
     }
 
-    private async void BtnTextDecrypt_Click(object? sender, EventArgs e)
+    private async Task DecryptTextAsync(string b64, bool copyResultToClipboard)
     {
         if (!File.Exists(ExePath)) { TextStatus("obsidianq.exe not found.", error: true); return; }
-        string b64 = _txtInput.Text.Trim();
         if (string.IsNullOrEmpty(b64)) { TextStatus("Input is empty.", error: true); return; }
 
         var hint = DetectObsqAccessModeFromBase64(b64);
@@ -9732,9 +11053,6 @@ class MainForm : Form
             var privKeys = ParseRecipientKeyPaths(_txtPrivkeyText.Text);
             if (privKeys.Count == 0) { TextStatus("No private key found.", error: true); return; }
             string selected = privKeys[0];
-
-            // Decrypt should use a PRIVATE key. If a public-key-looking path was entered,
-            // attempt local inference to the corresponding private key.
             if (LooksLikePublicKeyPath(selected))
             {
                 string? inferredPriv = InferPrivateKeyPathFromPublic(selected);
@@ -9758,7 +11076,7 @@ class MainForm : Form
         else       args.Append(" --password-stdin");
 
         _shimmer.Start();
-        TextStatus("Decrypting...", error: false);
+        TextStatus(copyResultToClipboard ? "Decrypting clipboard..." : "Decrypting...", error: false);
         try
         {
             var psi = new ProcessStartInfo
@@ -9781,7 +11099,15 @@ class MainForm : Form
             if (proc.ExitCode == 0)
             {
                 _txtOutput.Text = plaintext;
-                TextStatus("Decrypted.", error: false);
+                if (copyResultToClipboard)
+                {
+                    Clipboard.SetText(_txtOutput.Text);
+                    TextStatus("Decrypted and copied to clipboard.", error: false);
+                }
+                else
+                {
+                    TextStatus("Decrypted.", error: false);
+                }
             }
             else
             {
@@ -9797,16 +11123,50 @@ class MainForm : Form
                         MessageBoxIcon.Warning) == DialogResult.Yes)
                     {
                         BrowseKeyFile(_txtPrivkeyText);
-                        if (!string.IsNullOrWhiteSpace(_txtPrivkeyText.Text))
-                            BeginInvoke(new Action(() => BtnTextDecrypt_Click(sender, e)));
                     }
                 }
                 else
+                {
                     TextStatus($"Decryption failed (exit {proc.ExitCode}).", error: true);
+                }
             }
         }
         catch (Exception ex) { TextStatus($"Error: {ex.Message}", error: true); }
         finally { _shimmer.Stop(); }
+    }
+
+    private async void BtnTextEncrypt_Click(object? sender, EventArgs e)
+    {
+        await EncryptTextAsync(_txtInput.Text, copyResultToClipboard: false);
+    }
+
+    private async void BtnTextDecrypt_Click(object? sender, EventArgs e)
+    {
+        await DecryptTextAsync(_txtInput.Text.Trim(), copyResultToClipboard: false);
+    }
+
+    private async void BtnTextEncryptClipboard_Click(object? sender, EventArgs e)
+    {
+        string plaintext = Clipboard.GetText();
+        if (string.IsNullOrWhiteSpace(plaintext))
+        {
+            TextStatus("Clipboard does not contain text to encrypt.", error: true);
+            return;
+        }
+        _txtInput.Text = plaintext;
+        await EncryptTextAsync(plaintext, copyResultToClipboard: true);
+    }
+
+    private async void BtnTextDecryptClipboard_Click(object? sender, EventArgs e)
+    {
+        string ciphertext = Clipboard.GetText().Trim();
+        if (string.IsNullOrWhiteSpace(ciphertext))
+        {
+            TextStatus("Clipboard does not contain text to decrypt.", error: true);
+            return;
+        }
+        _txtInput.Text = ciphertext;
+        await DecryptTextAsync(ciphertext, copyResultToClipboard: true);
     }
 
     private void TextStatus(string msg, bool error)

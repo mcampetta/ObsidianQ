@@ -162,6 +162,7 @@ $bundleReadme = @(
     '',
     'Included files:',
     '- ObsidianQ.Launcher.exe is the main desktop app.',
+    '- ObsidianQ.Launcher.exe also provides the optional clipboard tray helper from Settings.',
     '- obsidianq.exe is included for direct CLI use and transparent local runtime access.',
     '- README_BUNDLE.txt explains the release bundle layout.',
     '',
@@ -169,7 +170,8 @@ $bundleReadme = @(
     '1. Extract this bundle to a folder you control.',
     '2. Run ObsidianQ.Launcher.exe from that folder.',
     '3. Use Settings inside the launcher if you want Explorer right-click actions.',
-    '4. You can keep obsidianq.exe beside the launcher for direct CLI use, but the launcher also carries an embedded fallback.',
+    '4. Use Settings if you want to launch or enable the clipboard tray helper at Windows startup.',
+    '5. You can keep obsidianq.exe beside the launcher for direct CLI use, but the launcher also carries an embedded fallback.',
     '',
     'Versioning:',
     '- Replace launcher and CLI together when updating releases.'
