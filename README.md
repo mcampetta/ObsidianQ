@@ -4,13 +4,14 @@
 
 Local-first, high-performance encryption for files, text, vaults, inspection, and secure delivery workflows.
 
-ObsidianQ combines practical desktop UX with modern cryptography, including password-based protection and Secure Contacts recipient exchange for trusted sharing.
+ObsidianQ combines practical desktop UX with modern cryptography, including password-based protection, hybrid Secure Contacts recipient exchange, and recipient-friendly Secure Delivery workflows.
 
 ## Highlights
 
 - File encryption/decryption with password or Secure Contacts recipient mode
 - Secure Delivery workflows with recommended ZIP browser bundle, encrypted package-only, and Single EXE advanced outputs
 - Secure Contacts identity and trusted contact management
+- Built-in clipboard helper tray mode for quick text encrypt/decrypt and contact actions
 - Public Identity import/export (`.obsqpub`) with metadata
 - Encrypted Vault workflows (create, load, add/extract/remove, rekey)
 - Container metadata inspection for `.obsq`, vault, ZIP package, and Single EXE package formats
@@ -50,7 +51,7 @@ ObsidianQ does not currently claim FIPS 203 ML-KEM compliance or interoperabilit
 
 1. Build or open the launcher from `tools/windows-gui`.
 2. Launch `ObsidianQ.Launcher.exe`.
-3. On first run, set up or restore a local keypair when prompted (recommended).
+3. On first run, review the guided setup options for shell integration, Secure Contacts keypair setup, and the optional clipboard helper tray mode.
 4. Use:
    - `File` for file encryption/decryption
    - `Text` for short text encryption/decryption
@@ -58,10 +59,12 @@ ObsidianQ does not currently claim FIPS 203 ML-KEM compliance or interoperabilit
    - `Inspect` for metadata and integrity review
    - `Secure Delivery` for portable password-protected delivery
    - `Secure Contacts` for identity/contact-based exchange
+   - `Settings` to launch or configure the built-in clipboard helper tray mode
 
 Important:
 - `obsidianq.exe` is still included for direct CLI use and transparent local runtime access.
 - The launcher prefers a local `obsidianq.exe` when present, but also carries an embedded fallback for normal desktop use.
+- Secure Delivery defaults to a ZIP bundle with an offline browser decryptor; Single EXE remains available as an advanced compatibility option.
 
 ## Quick Start (CLI)
 
@@ -157,6 +160,7 @@ Get-FileHash .\ObsidianQBundle.zip -Algorithm SHA256
 - Vault transfer workflows now use streaming progress parsing where available.
 - Secure Contacts is the default key-based mode label across the UI.
 - Explorer shell actions support direct package creation and folder package workflows.
+- Clipboard helper actions are available from the launcher tray mode and can be configured from Settings.
 
 ## Security Disclaimer
 
