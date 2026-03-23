@@ -11829,10 +11829,6 @@ class MainForm : Form
         if (!string.IsNullOrWhiteSpace(native) && File.Exists(native))
             return native;
 
-        string? embedded = TryExtractEmbeddedExtractorStub();
-        if (!string.IsNullOrWhiteSpace(embedded) && File.Exists(embedded))
-            return embedded;
-
         return candidate;
     }
 
@@ -11871,26 +11867,6 @@ class MainForm : Form
             stream.CopyTo(ms);
             byte[] bytes = ms.ToArray();
             return WriteEmbeddedBinaryWithHash("ObsidianQ.Bootstrapper.embedded", bytes);
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private static string? TryExtractEmbeddedExtractorStub()
-    {
-        const string resourceName = "ObsidianQ.Launcher.Embedded.ObsidianQ.Extractor.exe";
-        try
-        {
-            var asm = Assembly.GetExecutingAssembly();
-            using var stream = asm.GetManifestResourceStream(resourceName);
-            if (stream == null) return null;
-
-            using var ms = new MemoryStream();
-            stream.CopyTo(ms);
-            byte[] bytes = ms.ToArray();
-            return WriteEmbeddedBinaryWithHash("ObsidianQ.Extractor.embedded", bytes);
         }
         catch
         {

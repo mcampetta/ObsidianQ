@@ -60,8 +60,8 @@ ObsidianQ does not currently claim FIPS 203 ML-KEM compliance or interoperabilit
    - `Secure Contacts` for identity/contact-based exchange
 
 Important:
-- `ObsidianQ.Launcher.exe` and `obsidianq.exe` must remain in the same folder.
-- The launcher invokes `obsidianq.exe` for runtime operations.
+- `obsidianq.exe` is still included for direct CLI use and transparent local runtime access.
+- The launcher prefers a local `obsidianq.exe` when present, but also carries an embedded fallback for normal desktop use.
 
 ## Quick Start (CLI)
 

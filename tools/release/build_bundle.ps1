@@ -6,10 +6,9 @@
 .DESCRIPTION
     1. Locates cargo and dotnet (adds ~/.cargo/bin to PATH if needed).
     2. Builds obsidianq.exe and obsidianq-bootstrapper.exe (Rust release) from the workspace root.
-    3. Publishes ObsidianQ.Extractor.exe for legacy compatibility flows.
-    4. Refreshes the launcher's embedded binaries and offline web decryptor from the current build outputs.
-    5. Publishes ObsidianQ.Launcher.exe (C# WinForms, self-contained, single-file).
-    6. Stages core bundle files under dist/ObsidianQBundle/.
+    3. Refreshes the launcher's embedded binaries and offline web decryptor from the current build outputs.
+    4. Publishes ObsidianQ.Launcher.exe (C# WinForms, self-contained, single-file).
+    5. Stages core bundle files under dist/ObsidianQBundle/.
 
 .EXAMPLE
     # From repo root:
@@ -37,14 +36,11 @@ $RepoRoot  = Split-Path (Split-Path $ScriptDir -Parent) -Parent
 $RustCli              = Join-Path $RepoRoot 'target\release\obsidianq.exe'
 $RustBootstrapper     = Join-Path $RepoRoot 'target\release\obsidianq-bootstrapper.exe'
 $GuiProject           = Join-Path $RepoRoot 'tools\windows-gui\ObsidianQ.Launcher.csproj'
-$ExtractorProject     = Join-Path $RepoRoot 'tools\windows-extractor\ObsidianQ.Extractor.csproj'
-$ExtractorPublish     = Join-Path $RepoRoot 'tools\windows-extractor\bin\Release\net8.0-windows\win-x64\publish\ObsidianQ.Extractor.exe'
 $OfflineDecryptor     = Join-Path $RepoRoot 'web\offline\decrypt.html'
 $GuiPublish           = Join-Path $RepoRoot 'tools\windows-gui\bin\Release\net8.0-windows\win-x64\publish\ObsidianQ.Launcher.exe'
 $EmbeddedDir          = Join-Path $RepoRoot 'tools\windows-gui\embedded'
 $EmbeddedCli          = Join-Path $EmbeddedDir 'obsidianq.exe'
 $EmbeddedBootstrapper = Join-Path $EmbeddedDir 'ObsidianQ.Bootstrapper.exe'
-$EmbeddedExtractor    = Join-Path $EmbeddedDir 'ObsidianQ.Extractor.exe'
 $EmbeddedDecryptor    = Join-Path $EmbeddedDir 'ObsidianQ.WebDecrypt.html'
 
 $BundleDir            = Join-Path $RepoRoot 'dist\ObsidianQBundle'
@@ -72,7 +68,7 @@ if (-not $dotnet) { Write-Fail "dotnet not found. Install .NET 8 SDK from https:
 Write-OK "dotnet: $(& dotnet --version)"
 
 # Confirm source files exist
-foreach ($f in @($GuiProject, $ExtractorProject)) {
+foreach ($f in @($GuiProject)) {
     if (-not (Test-Path $f)) { Write-Fail "Expected source file not found: $f" }
 }
 if (-not (Test-Path $OfflineDecryptor)) { Write-Fail "Expected offline decryptor not found: $OfflineDecryptor (run npm run build:offline in web/ if needed)" }
@@ -95,18 +91,6 @@ $bootstrapperSize = [math]::Round((Get-Item $RustBootstrapper).Length / 1MB, 2)
 Write-OK "obsidianq.exe built  ($rustSize MB)"
 Write-OK "obsidianq-bootstrapper.exe built  ($bootstrapperSize MB)"
 
-# ---------------------------------------------------------------------------
-# Publish ZIP bundle viewer (self-contained, single-file)
-# ---------------------------------------------------------------------------
-Write-Step "Publishing ZIP bundle viewer (Release, win-x64, single-file)"
-& dotnet publish $ExtractorProject -c Release --nologo
-
-if ($LASTEXITCODE -ne 0) { Write-Fail "dotnet publish failed for extractor (exit $LASTEXITCODE)" }
-if (-not (Test-Path $ExtractorPublish)) { Write-Fail "Expected extractor not found after publish: $ExtractorPublish" }
-
-$extractorSize = [math]::Round((Get-Item $ExtractorPublish).Length / 1MB, 2)
-Write-OK "ObsidianQ.Extractor.exe published  ($extractorSize MB)"
-
 # Refresh embedded launcher binaries
 # ---------------------------------------------------------------------------
 Write-Step "Refreshing embedded launcher binaries"
@@ -117,11 +101,9 @@ if (-not (Test-Path $EmbeddedDir)) {
 
 Copy-Item $RustCli $EmbeddedCli -Force
 Copy-Item $RustBootstrapper $EmbeddedBootstrapper -Force
-Copy-Item $ExtractorPublish $EmbeddedExtractor -Force
 Copy-Item $OfflineDecryptor $EmbeddedDecryptor -Force
 Write-OK "Updated embedded obsidianq.exe"
 Write-OK "Updated embedded ObsidianQ.Bootstrapper.exe"
-Write-OK "Updated embedded ObsidianQ.Extractor.exe"
 Write-OK "Updated embedded ObsidianQ.WebDecrypt.html"
 
 # Publish C# GUI (self-contained, single-file)
@@ -178,16 +160,16 @@ $bundleReadme = @(
     'ObsidianQ Release Bundle',
     '========================',
     '',
-    'Important:',
-    '- Keep ObsidianQ.Launcher.exe and obsidianq.exe in the SAME folder.',
-    '- The launcher calls obsidianq.exe at runtime.',
-    '- If obsidianq.exe is missing or moved, launcher operations will fail.',
+    'Included files:',
+    '- ObsidianQ.Launcher.exe is the main desktop app.',
+    '- obsidianq.exe is included for direct CLI use and transparent local runtime access.',
+    '- README_BUNDLE.txt explains the release bundle layout.',
     '',
     'Recommended use:',
     '1. Extract this bundle to a folder you control.',
     '2. Run ObsidianQ.Launcher.exe from that folder.',
     '3. Use Settings inside the launcher if you want Explorer right-click actions.',
-    '4. Do not rename or relocate obsidianq.exe independently.',
+    '4. You can keep obsidianq.exe beside the launcher for direct CLI use, but the launcher also carries an embedded fallback.',
     '',
     'Versioning:',
     '- Replace launcher and CLI together when updating releases.'
