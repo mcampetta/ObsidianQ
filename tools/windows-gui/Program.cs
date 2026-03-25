@@ -2499,6 +2499,93 @@ internal sealed class ClipboardAgentContext : ApplicationContext
         return Convert.ToHexString(data);
     }
 
+    private static bool TryExtractImportableContactKeyBase64(string text, out string keyBase64)
+    {
+        keyBase64 = string.Empty;
+        if (string.IsNullOrWhiteSpace(text)) return false;
+
+        const string begin = "-----BEGIN OBSIDIANQ PUBLIC IDENTITY-----";
+        const string end = "-----END OBSIDIANQ PUBLIC IDENTITY-----";
+        if (text.Contains(begin, StringComparison.Ordinal))
+        {
+            int s = text.IndexOf(begin, StringComparison.Ordinal);
+            int e = text.IndexOf(end, StringComparison.Ordinal);
+            if (s < 0 || e <= s) return false;
+            string body = text[(s + begin.Length)..e];
+            bool inKey = false;
+            var keyLines = new List<string>();
+            foreach (string raw in body.Split(['\r', '\n'], StringSplitOptions.None))
+            {
+                string line = raw.Trim();
+                if (string.IsNullOrWhiteSpace(line)) continue;
+                if (inKey)
+                {
+                    if (line.Contains(':')) break;
+                    keyLines.Add(line);
+                    continue;
+                }
+                if (line.Equals("key:", StringComparison.OrdinalIgnoreCase))
+                {
+                    inKey = true;
+                    continue;
+                }
+            }
+
+            if (keyLines.Count == 0) return false;
+            keyBase64 = string.Concat(keyLines);
+            return TryDecodePublicKeyBytes(keyBase64);
+        }
+
+        var compact = new StringBuilder(text.Length);
+        foreach (char ch in text)
+            if (!char.IsWhiteSpace(ch))
+                compact.Append(ch);
+        keyBase64 = compact.ToString();
+        return TryDecodePublicKeyBytes(keyBase64);
+    }
+
+    private async Task<bool> IsClipboardTextLocalIdentityAsync(string text)
+    {
+        try
+        {
+            if (!TryExtractImportableContactKeyBase64(text, out string clipboardKeyBase64))
+                return false;
+
+            string? pubKey = ResolvePreferredPublicKey();
+            if (string.IsNullOrWhiteSpace(pubKey) || !File.Exists(pubKey))
+                return false;
+
+            string localKeyBase64 = Convert.ToBase64String(File.ReadAllBytes(pubKey));
+            if (string.Equals(localKeyBase64, clipboardKeyBase64, StringComparison.Ordinal))
+                return true;
+
+            string? localFingerprint = await ComputeFingerprintAsync(pubKey);
+            if (string.IsNullOrWhiteSpace(localFingerprint))
+                return false;
+
+            byte[] clipboardKeyRaw = Convert.FromBase64String(clipboardKeyBase64);
+            string tempKeyPath = Path.Combine(Path.GetTempPath(), $"obsq_clipboard_identity_{Guid.NewGuid():N}.bin");
+            try
+            {
+                File.WriteAllBytes(tempKeyPath, clipboardKeyRaw);
+                string? clipboardFingerprint = await ComputeFingerprintAsync(tempKeyPath);
+                return !string.IsNullOrWhiteSpace(clipboardFingerprint)
+                    && string.Equals(
+                        NormalizeFingerprint(localFingerprint),
+                        NormalizeFingerprint(clipboardFingerprint),
+                        StringComparison.Ordinal);
+            }
+            finally
+            {
+                try { if (File.Exists(tempKeyPath)) File.Delete(tempKeyPath); } catch { }
+            }
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private static bool GetClipboardWatchCiphertextEnabled()
     {
         using var key = Registry.CurrentUser.OpenSubKey(LauncherPrefsKey);
@@ -2609,6 +2696,12 @@ internal sealed class ClipboardAgentContext : ApplicationContext
 
         if (_watchIdentityEnabled && LooksLikeImportableContactText(text))
         {
+            if (await IsClipboardTextLocalIdentityAsync(text))
+            {
+                MarkClipboardTextHandled(text);
+                return;
+            }
+
             _clipboardPromptOpen = true;
             try
             {
@@ -3169,15 +3262,31 @@ internal sealed class ClipboardAgentContext : ApplicationContext
         using var prompt = new NamePromptForm();
         if (prompt.ShowDialog() != DialogResult.OK) return;
 
-        string args = "contacts import --clipboard";
-        if (!string.IsNullOrWhiteSpace(prompt.ContactName))
-            args += $" --name \"{prompt.ContactName.Replace("\"", "\\\"")}\"";
+        string importClipboardText = LoadClipboardTextOrThrow();
+        string suffix = importClipboardText.Contains("BEGIN OBSIDIANQ PUBLIC IDENTITY", StringComparison.Ordinal)
+            ? ".obsqpub"
+            : ".txt";
+        string tempPath = Path.Combine(Path.GetTempPath(), $"obsq_clipboard_import_{Guid.NewGuid():N}{suffix}");
+        importClipboardText = importClipboardText.Trim();
 
-        var (code, stdout, stderr) = await RunCliAsync(args);
-        if (code == 0)
-            ShowInfo(string.IsNullOrWhiteSpace(stdout) ? "Contact imported from clipboard." : stdout);
-        else
-            ShowError(string.IsNullOrWhiteSpace(stderr) ? $"Contact import failed (exit {code})." : stderr);
+        try
+        {
+            File.WriteAllText(tempPath, importClipboardText, new UTF8Encoding(false));
+
+            string args = $"contacts import \"{tempPath}\"";
+            if (!string.IsNullOrWhiteSpace(prompt.ContactName))
+                args += $" --name \"{prompt.ContactName.Replace("\"", "\\\"")}\"";
+
+            var (code, stdout, stderr) = await RunCliAsync(args);
+            if (code == 0)
+                ShowInfo(string.IsNullOrWhiteSpace(stdout) ? "Contact imported from clipboard." : stdout);
+            else
+                ShowError(string.IsNullOrWhiteSpace(stderr) ? $"Contact import failed (exit {code})." : stderr);
+        }
+        finally
+        {
+            try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
+        }
     }
 
     private static async Task<string?> ComputeFingerprintAsync(string keyPath)
@@ -3238,6 +3347,12 @@ internal sealed class ClipboardAgentContext : ApplicationContext
         }
         catch { }
         return false;
+    }
+
+    private static string NormalizeFingerprint(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+        return new string(value.Where(char.IsLetterOrDigit).ToArray()).ToUpperInvariant();
     }
 
     private static (string Name, string Email, string Device) LoadLocalIdentityProfile()
