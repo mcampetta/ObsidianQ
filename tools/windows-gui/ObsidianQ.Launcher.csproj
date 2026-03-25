@@ -21,7 +21,7 @@
     <!-- Trimming (WinForms needs partial trimming at minimum) -->
     <PublishTrimmed>false</PublishTrimmed>
 
-    <Version>1.4.0</Version>
+    <Version>1.5.0</Version>
     <Description>ObsidianQ local-first encryption launcher</Description>
   </PropertyGroup>
 

@@ -8329,7 +8329,7 @@ class MainForm : Form
         AddAboutBullet(cardBest, "Keep the application updated when new releases are available");
 
         var cardVersion = MakeAboutCard("Version");
-        AddAboutParagraph(cardVersion, "ObsidianQ Version: 1.0");
+        AddAboutParagraph(cardVersion, "ObsidianQ Version: 1.5.0");
         AddAboutParagraph(cardVersion, "Built for secure, high-performance encryption and post-quantum readiness");
         AddAboutParagraph(cardVersion, "Local-first security | Modern cryptography | Trusted file exchange", muted: true);
 
